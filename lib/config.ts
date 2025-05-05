@@ -2,7 +2,6 @@
 import os from "os"
 import path from "path"
 
-
 export const config = {
   // YouTube downloader configuration
   ytdl: {
@@ -23,6 +22,10 @@ export const config = {
   },
   // Redis configuration
   redis: {
+    // Check if we're in production (Vercel)
+    enabled: process.env.NODE_ENV === "development" || !!process.env.REDIS_URL,
+    // Redis URL (for Upstash)
+    url: process.env.REDIS_URL,
     // Redis host
     host: process.env.REDIS_HOST || "localhost",
     // Redis port

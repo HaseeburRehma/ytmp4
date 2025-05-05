@@ -21,9 +21,26 @@ echo "yt-dlp installation verified"
 # Create .env.production with the correct paths
 echo "Creating environment variables file..."
 cat > .env.production << EOL
+# Database
+DATABASE_URL=${DATABASE_URL}
+
+# Redis configuration - disable for Vercel
+REDIS_KEY_PREFIX=ytdl:
+ENABLE_WORKER=false
+USE_QUEUE=false
+
+# Server Configuration
+BASE_URL=https://youtube-downloader-l3s9vvt4q.vercel.app
+ENABLE_CORS=false
+NEXT_PUBLIC_APP_URL=https://youtube-downloader-l3s9vvt4q.vercel.app
+
+# Tool paths
 YT_DLP_PATH=$BIN_DIR/yt-dlp
 FFMPEG_PATH=ffmpeg
 FFPROBE_PATH=ffprobe
+
+# Socket.IO
+NEXT_PUBLIC_SOCKET_URL=https://youtube-downloader-l3s9vvt4q.vercel.app
 EOL
 
 echo "Environment variables set in .env.production"

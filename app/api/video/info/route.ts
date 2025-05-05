@@ -9,27 +9,27 @@ export const maxDuration = 15
 async function getInfoWithYtDlp(url: string): Promise<any> {
   return new Promise((resolve, reject) => {
     // Use environment variable for yt-dlp path with fallback to /tmp/bin/yt-dlp
-    const ytDlpPath = process.env.YT_DLP_PATH || "/tmp/bin/yt-dlp"
+    const ytDlpPath: string = process.env.YT_DLP_PATH || "/tmp/bin/yt-dlp"
 
     console.log(`Using yt-dlp from: ${ytDlpPath}`)
 
     const args = ["--dump-json", "--no-playlist", "--no-warnings", url]
 
     // Spawn yt-dlp process
-    const process = spawn(ytDlpPath, args)
+    const ytDlpProcess = spawn(ytDlpPath, args)
 
     let output = ""
     let errorOutput = ""
 
-    process.stdout.on("data", (data) => {
+    ytDlpProcess.stdout.on("data", (data: Buffer) => {
       output += data.toString()
     })
 
-    process.stderr.on("data", (data) => {
+    ytDlpProcess.stderr.on("data", (data: Buffer) => {
       errorOutput += data.toString()
     })
 
-    process.on("close", (code) => {
+    ytDlpProcess.on("close", (code: number | null) => {
       if (code === 0 && output.trim()) {
         try {
           const info = JSON.parse(output.trim())
@@ -50,16 +50,21 @@ async function getInfoWithYtDlp(url: string): Promise<any> {
       }
     })
 
-    process.on("error", (err) => {
+    ytDlpProcess.on("error", (err: Error) => {
       console.error(`Failed to start yt-dlp: ${err.message}`)
       reject(err)
     })
 
     // Add timeout
-    setTimeout(() => {
-      process.kill()
+    const timeoutId = setTimeout(() => {
+      ytDlpProcess.kill()
       reject(new Error("yt-dlp process timed out"))
     }, 10000)
+
+    // Clear timeout when process ends
+    ytDlpProcess.on("close", () => {
+      clearTimeout(timeoutId)
+    })
   })
 }
 
@@ -80,14 +85,14 @@ export async function POST(request: NextRequest) {
 
     // Try three different methods to get video info
     let videoInfo = null
-    const errors = []
+    const errors: string[] = []
 
     // Method 1: ytdl-core (your original method)
     try {
       console.log("Trying ytdl-core method...")
       const info = (await Promise.race([
         ytdl.getBasicInfo(url),
-        new Promise((_, reject) => setTimeout(() => reject(new Error("Request timed out")), 10000)),
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error("Request timed out")), 10000)),
       ])) as ytdl.videoInfo
 
       videoInfo = {
@@ -100,9 +105,9 @@ export async function POST(request: NextRequest) {
 
       console.log("Successfully retrieved info using ytdl-core")
       return NextResponse.json(videoInfo)
-    } catch (ytdlError) {
+    } catch (ytdlError: any) {
       console.error("ytdl-core method failed:", ytdlError)
-      errors.push(ytdlError.message)
+      errors.push(ytdlError.message || "Unknown ytdl-core error")
     }
 
     // Method 2: Try yt-dlp
@@ -112,9 +117,9 @@ export async function POST(request: NextRequest) {
         videoInfo = await getInfoWithYtDlp(url)
         console.log("Successfully retrieved info using yt-dlp")
         return NextResponse.json(videoInfo)
-      } catch (ytDlpError) {
+      } catch (ytDlpError: any) {
         console.error("yt-dlp method failed:", ytDlpError)
-        errors.push(ytDlpError.message)
+        errors.push(ytDlpError.message || "Unknown yt-dlp error")
       }
     }
 
@@ -147,9 +152,9 @@ export async function POST(request: NextRequest) {
 
         console.log("Successfully retrieved basic info using oEmbed")
         return NextResponse.json(videoInfo)
-      } catch (oembedError) {
+      } catch (oembedError: any) {
         console.error("oEmbed method failed:", oembedError)
-        errors.push(oembedError.message)
+        errors.push(oembedError.message || "Unknown oEmbed error")
       }
     }
 
@@ -173,15 +178,15 @@ export async function POST(request: NextRequest) {
 
         console.log("Created minimal info from video ID")
         return NextResponse.json(videoInfo)
-      } catch (finalError) {
+      } catch (finalError: any) {
         console.error("Final method failed:", finalError)
-        errors.push(finalError.message)
+        errors.push(finalError.message || "Unknown error in final method")
       }
     }
 
     // If we get here, all methods failed
     throw new Error(`Failed to get video info: ${errors.join(", ")}`)
-  } catch (error) {
+  } catch (error: any) {
     console.error("Error fetching video info:", error)
 
     return NextResponse.json(
