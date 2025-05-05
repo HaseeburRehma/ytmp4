@@ -1,5 +1,67 @@
 import { type NextRequest, NextResponse } from "next/server"
+import { spawn } from "child_process"
 import ytdl from "ytdl-core"
+
+export const runtime = "nodejs"
+export const maxDuration = 15
+
+// Add this helper function to run yt-dlp when other methods fail
+async function getInfoWithYtDlp(url: string): Promise<any> {
+  return new Promise((resolve, reject) => {
+    // Use environment variable for yt-dlp path with fallback to /tmp/bin/yt-dlp
+    const ytDlpPath = process.env.YT_DLP_PATH || "/tmp/bin/yt-dlp"
+
+    console.log(`Using yt-dlp from: ${ytDlpPath}`)
+
+    const args = ["--dump-json", "--no-playlist", "--no-warnings", url]
+
+    // Spawn yt-dlp process
+    const process = spawn(ytDlpPath, args)
+
+    let output = ""
+    let errorOutput = ""
+
+    process.stdout.on("data", (data) => {
+      output += data.toString()
+    })
+
+    process.stderr.on("data", (data) => {
+      errorOutput += data.toString()
+    })
+
+    process.on("close", (code) => {
+      if (code === 0 && output.trim()) {
+        try {
+          const info = JSON.parse(output.trim())
+          resolve({
+            title: info.title,
+            thumbnail: info.thumbnail,
+            duration: info.duration,
+            uploader: info.uploader,
+            view_count: info.view_count || 0,
+          })
+        } catch (error) {
+          console.error("Error parsing yt-dlp output:", error)
+          reject(new Error("Failed to parse video information"))
+        }
+      } else {
+        console.error(`yt-dlp exited with code ${code}: ${errorOutput}`)
+        reject(new Error(`Failed to get video info with yt-dlp: ${errorOutput}`))
+      }
+    })
+
+    process.on("error", (err) => {
+      console.error(`Failed to start yt-dlp: ${err.message}`)
+      reject(err)
+    })
+
+    // Add timeout
+    setTimeout(() => {
+      process.kill()
+      reject(new Error("yt-dlp process timed out"))
+    }, 10000)
+  })
+}
 
 export async function POST(request: NextRequest) {
   try {
@@ -14,15 +76,21 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Invalid YouTube URL" }, { status: 400 })
     }
 
+    console.log(`Processing video info request for: ${url}`)
+
+    // Try three different methods to get video info
+    let videoInfo = null
+    const errors = []
+
+    // Method 1: ytdl-core (your original method)
     try {
-      // Get video info with a timeout
+      console.log("Trying ytdl-core method...")
       const info = (await Promise.race([
         ytdl.getBasicInfo(url),
-        new Promise((_, reject) => setTimeout(() => reject(new Error("Request timed out")), 15000)),
+        new Promise((_, reject) => setTimeout(() => reject(new Error("Request timed out")), 10000)),
       ])) as ytdl.videoInfo
 
-      // Extract relevant information
-      const videoInfo = {
+      videoInfo = {
         title: info.videoDetails.title,
         thumbnail: info.videoDetails.thumbnails[info.videoDetails.thumbnails.length - 1].url,
         duration: Number.parseInt(info.videoDetails.lengthSeconds),
@@ -30,12 +98,30 @@ export async function POST(request: NextRequest) {
         view_count: Number.parseInt(info.videoDetails.viewCount),
       }
 
+      console.log("Successfully retrieved info using ytdl-core")
       return NextResponse.json(videoInfo)
     } catch (ytdlError) {
-      console.error("ytdl error:", ytdlError)
+      console.error("ytdl-core method failed:", ytdlError)
+      errors.push(ytdlError.message)
+    }
 
-      // Fallback method using oEmbed
+    // Method 2: Try yt-dlp
+    if (!videoInfo) {
       try {
+        console.log("Trying yt-dlp method...")
+        videoInfo = await getInfoWithYtDlp(url)
+        console.log("Successfully retrieved info using yt-dlp")
+        return NextResponse.json(videoInfo)
+      } catch (ytDlpError) {
+        console.error("yt-dlp method failed:", ytDlpError)
+        errors.push(ytDlpError.message)
+      }
+    }
+
+    // Method 3: Fallback to oEmbed (your original fallback)
+    if (!videoInfo) {
+      try {
+        console.log("Trying oEmbed fallback method...")
         const videoId = extractVideoId(url)
         if (!videoId) {
           throw new Error("Could not extract video ID")
@@ -46,25 +132,55 @@ export async function POST(request: NextRequest) {
         )
 
         if (!response.ok) {
-          throw new Error("Failed to fetch video info from oEmbed")
+          throw new Error(`Failed to fetch video info from oEmbed: ${response.status}`)
         }
 
         const data = await response.json()
 
-        // Create a simplified video info object
-        return NextResponse.json({
+        videoInfo = {
           title: data.title,
           thumbnail: `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg`,
           uploader: data.author_name,
-          // These values are not available from oEmbed
           duration: 0,
           view_count: 0,
-        })
-      } catch (fallbackError) {
-        console.error("Fallback error:", fallbackError)
-        throw new Error("Could not fetch video information. Please try again later.")
+        }
+
+        console.log("Successfully retrieved basic info using oEmbed")
+        return NextResponse.json(videoInfo)
+      } catch (oembedError) {
+        console.error("oEmbed method failed:", oembedError)
+        errors.push(oembedError.message)
       }
     }
+
+    // Method 4: Last resort - try to get minimal info from video page
+    if (!videoInfo) {
+      try {
+        console.log("Trying to scrape minimal info...")
+        const videoId = extractVideoId(url)
+        if (!videoId) {
+          throw new Error("Could not extract video ID")
+        }
+
+        // Just return minimal info based on video ID
+        videoInfo = {
+          title: `YouTube Video (${videoId})`,
+          thumbnail: `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`,
+          uploader: "Unknown",
+          duration: 0,
+          view_count: 0,
+        }
+
+        console.log("Created minimal info from video ID")
+        return NextResponse.json(videoInfo)
+      } catch (finalError) {
+        console.error("Final method failed:", finalError)
+        errors.push(finalError.message)
+      }
+    }
+
+    // If we get here, all methods failed
+    throw new Error(`Failed to get video info: ${errors.join(", ")}`)
   } catch (error) {
     console.error("Error fetching video info:", error)
 
@@ -77,7 +193,7 @@ export async function POST(request: NextRequest) {
   }
 }
 
-// Helper function to extract video ID
+// Helper function to extract video ID (keep your existing function)
 function extractVideoId(url: string): string | null {
   const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|&v=)([^#&?]*).*/
   const match = url.match(regExp)
