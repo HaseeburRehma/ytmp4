@@ -2,13 +2,14 @@ import path from "path"
 import os from "os"
 import { existsSync } from "fs"
 
-const isWindows = process.platform === "win32"
+const isWin = process.platform === "win32"
 const isProd = process.env.NODE_ENV === "production"
 
-const resolveBinary = (name: string) => {
-  const localPath = path.resolve(__dirname, "../bin", isWindows ? `${name}.exe` : name)
-  const fallback = name // fallback to system path if not found locally
-  return existsSync(localPath) ? localPath : fallback
+// Helper to build paths correctly
+function resolveBinary(name: string) {
+  const binary = isWin ? `${name}.exe` : name
+  const localPath = path.resolve(__dirname, "../bin", binary)
+  return existsSync(localPath) ? localPath : binary
 }
 
 export const config = {
