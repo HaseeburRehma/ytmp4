@@ -8,15 +8,10 @@ BIN_DIR="/tmp/bin"
 mkdir -p $BIN_DIR
 echo "Created bin directory at $BIN_DIR"
 
-# Install yt-dlp
-echo "Downloading yt-dlp..."
-curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o $BIN_DIR/yt-dlp
-chmod +x $BIN_DIR/yt-dlp
-echo "yt-dlp installed at $BIN_DIR/yt-dlp"
-
-# Verify yt-dlp works
-$BIN_DIR/yt-dlp --version
-echo "yt-dlp installation verified"
+# Run both Node scripts to install FFmpeg and yt-dlp
+echo "Running FFmpeg and yt-dlp setup scripts..."
+node scripts/download-ffmpeg.js
+node scripts/install-yt-dlp.js
 
 # Create .env.production with the correct paths
 echo "Creating environment variables file..."
@@ -35,9 +30,9 @@ ENABLE_CORS=false
 NEXT_PUBLIC_APP_URL=https://youtube-downloader-l3s9vvt4q.vercel.app
 
 # Tool paths
-YT_DLP_PATH=$BIN_DIR/yt-dlp
-FFMPEG_PATH=$BIN_DIR/ffmpeg
-FFPROBE_PATH=$BIN_DIR/ffprobe
+YT_DLP_PATH=/tmp/bin/yt-dlp
+FFMPEG_PATH=/tmp/bin/ffmpeg
+FFPROBE_PATH=/tmp/bin/ffprobe
 
 # Socket.IO
 NEXT_PUBLIC_SOCKET_URL=https://youtube-downloader-l3s9vvt4q.vercel.app
