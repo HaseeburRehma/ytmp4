@@ -9,18 +9,16 @@ WORKDIR /app
 # COPY --from=builder /app/package.json ./package.json
 
 # Install tools for downloading and extracting
-RUN apk add --no-cache curl xz
-
-# Download yt-dlp, ffmpeg, and ffprobe static binaries and set them up
-RUN mkdir -p /app/bin \
- && echo "Downloading yt-dlp..." \
- && curl -L "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux" -o /app/bin/yt-dlp \
- && echo "Downloading FFmpeg static build..." \
- && curl -L "https://johnvansickle.com/ffmpeg/builds/ffmpeg-release-amd64-static.tar.xz" -o /tmp/ffmpeg.tar.xz \
- && echo "Extracting FFmpeg and FFprobe..." \
- && tar -xJf /tmp/ffmpeg.tar.xz -C /app/bin --strip-components=1 "ffmpeg-*-amd64-static/ffmpeg" "ffmpeg-*-amd64-static/ffprobe" \
- && rm /tmp/ffmpeg.tar.xz \
- && chmod +x /app/bin/ffmpeg /app/bin/ffprobe /app/bin/yt-dlp
+RUN apk add --no-cache curl xz \
+  && mkdir -p /app/bin \
+  && echo "Downloading yt-dlp..." \
+  && curl -L "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux" -o /app/bin/yt-dlp \
+  && echo "Downloading FFmpeg static build..." \
+  && curl -L "https://johnvansickle.com/ffmpeg/builds/ffmpeg-release-amd64-static.tar.xz" -o /tmp/ffmpeg.tar.xz \
+  && echo "Extracting FFmpeg and FFprobe..." \
+  && tar -xJf /tmp/ffmpeg.tar.xz -C /app/bin --strip-components=1 ffmpeg-*-amd64-static/ffmpeg ffmpeg-*-amd64-static/ffprobe \
+  && chmod +x /app/bin/ffmpeg /app/bin/ffprobe /app/bin/yt-dlp \
+  && rm /tmp/ffmpeg.tar.xz
 
 # (Important) Add /app/bin to PATH so the binaries are found by the app
 ENV PATH="/app/bin:${PATH}"
