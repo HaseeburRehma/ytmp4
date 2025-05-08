@@ -3,40 +3,25 @@ set -e
 
 echo "Starting Vercel build script..."
 
-# Create bin directory in the project root
-BIN_DIR="bin"
+# Set BIN_DIR to a known path within the build output (must be committed if needed at runtime)
+BIN_DIR="./bin"
 mkdir -p $BIN_DIR
 echo "Created bin directory at $BIN_DIR"
 
-# Run both Node scripts to install FFmpeg and yt-dlp
-echo "Running FFmpeg and yt-dlp setup scripts..."
-node scripts/download-ffmpeg.js
-node scripts/install-yt-dlp.js   
+# Download yt-dlp
+echo "Downloading yt-dlp..."
+curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o $BIN_DIR/yt-dlp
+chmod +x $BIN_DIR/yt-dlp
+echo "yt-dlp installed at $BIN_DIR/yt-dlp"
 
-# Create .env.production with the correct paths
-echo "Creating environment variables file..."
+# Download FFmpeg (Linux static build) and extract just the binaries
+echo "Downloading FFmpeg..."
+curl -L https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-i686-static.tar.xz -o ffmpeg.tar.xz
+tar -xf ffmpeg.tar.xz
+mv ffmpeg-*-static/ffmpeg $BIN_DIR/ffmpeg
+mv ffmpeg-*-static/ffprobe $BIN_DIR/ffprobe
+chmod +x $BIN_DIR/ffmpeg $BIN_DIR/ffprobe
+rm -rf ffmpeg.tar.xz ffmpeg-*-static
+echo "FFmpeg and FFprobe installed at $BIN_DIR"
 
-# Database
-DATABASE_URL=${DATABASE_URL}
-
-# Redis configuration - disabled for Vercel
-REDIS_KEY_PREFIX=ytdl:
-ENABLE_WORKER=false
-USE_QUEUE=false
-
-# Server Configuration
-BASE_URL=https://youtube-downloader-ashy-ten.vercel.app
-ENABLE_CORS=false
-NEXT_PUBLIC_APP_URL=https://youtube-downloader-ashy-ten.vercel.app
-
-# Tool paths
-YT_DLP_PATH=bin/yt-dlp
-FFMPEG_PATH=bin/ffmpeg
-FFPROBE_PATH=bin/ffprobe
-
-# Socket.IO
-NEXT_PUBLIC_SOCKET_URL=https://youtube-downloader-ashy-ten.vercel.app
-
-
-echo "Environment variables set in .env.production"
 echo "Build script completed successfully"
