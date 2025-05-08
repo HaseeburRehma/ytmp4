@@ -1,34 +1,33 @@
-// Configuration for the application
 import os from "os"
 import path from "path"
+import fs from "fs"
+
+const isProd = process.env.NODE_ENV === "production"
+const BIN_DIR = "/app/bin"
+
+// Validate binary presence with proper type annotation and error suppression
+const binaries: string[] = ["yt-dlp", "ffmpeg", "ffprobe"]
+for (const binary of binaries) {
+  const binPath = path.join(BIN_DIR, binary)
+  if (!fs.existsSync(binPath)) {
+    console.warn(`⚠️  ${binary} not found at ${binPath} — make sure it's bundled correctly.`)
+  }
+}
 
 export const config = {
-  // YouTube downloader configuration
   ytdl: {
-    // Path to yt-dlp executable
-    ytDlpPath: process.env.YT_DLP_PATH || "yt-dlp",
-    // Path to ffmpeg executable
-    ffmpegPath: process.env.FFMPEG_PATH,
-    // Path to ffprobe executable
-    ffprobePath: process.env.FFPROBE_PATH,
-    // Maximum concurrent downloads
+    ytDlpPath: isProd ? path.join(BIN_DIR, "yt-dlp") : process.env.YT_DLP_PATH ?? "yt-dlp",
+    ffmpegPath: isProd ? path.join(BIN_DIR, "ffmpeg") : process.env.FFMPEG_PATH ?? "ffmpeg",
+    ffprobePath: isProd ? path.join(BIN_DIR, "ffprobe") : process.env.FFPROBE_PATH ?? "ffprobe",
     maxConcurrentDownloads: 5,
-    // Use system temp directory for temporary files
     tempDir: path.join(os.tmpdir(), "youtube-downloader", "temp"),
-    // Cleanup interval in milliseconds (5 minutes)
-    cleanupInterval: 300000,
-    // Maximum file age in milliseconds (10 minutes)
-    maxFileAge: 600000,
+    cleanupInterval: 5 * 60 * 1000,
+    maxFileAge: 10 * 60 * 1000,
   },
-  // Redis configuration
   redis: {
-    // Check if we're in production (Vercel)
-    enabled: process.env.NODE_ENV === "development" || !!process.env.REDIS_URL,
-    // Redis URL (for Upstash)
+    enabled: Boolean(process.env.REDIS_URL),
     url: process.env.REDIS_URL,
-    // Redis host
-    host: process.env.REDIS_HOST || "localhost",
-    // Redis port
-    port: Number.parseInt(process.env.REDIS_PORT || "6379", 10),
+    host: process.env.REDIS_HOST ?? "localhost",
+    port: parseInt(process.env.REDIS_PORT ?? "6379", 10),
   },
 }

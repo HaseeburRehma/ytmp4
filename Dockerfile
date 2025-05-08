@@ -1,32 +1,33 @@
-FROM node:18-alpine
+# ... (earlier stages like build omitted for brevity)
 
+FROM node:18-alpine AS runner
 WORKDIR /app
 
-# Install PNPM and bash
-RUN npm install -g pnpm@10.10.0 && apk add --no-cache bash
+# (Optional) Copy built application from builder stage:
+# COPY --from=builder /app/dist ./dist
+# COPY --from=builder /app/node_modules ./node_modules
+# COPY --from=builder /app/package.json ./package.json
 
-ENV NODE_ENV=production
+# Install tools for downloading and extracting
+RUN apk add --no-cache curl xz
 
-ENV DATABASE_URL=postgresql://neondb_owner:npg_j3Fftup2RJIA@ep-broad-dream-a4jw9cwh-pooler.us-east-1.aws.neon.tech/neondb?sslmode=require
+# Download yt-dlp, ffmpeg, and ffprobe static binaries and set them up
+RUN mkdir -p /app/bin \
+ && echo "Downloading yt-dlp..." \
+ && curl -L "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux" -o /app/bin/yt-dlp \
+ && echo "Downloading FFmpeg static build..." \
+ && curl -L "https://johnvansickle.com/ffmpeg/builds/ffmpeg-release-amd64-static.tar.xz" -o /tmp/ffmpeg.tar.xz \
+ && echo "Extracting FFmpeg and FFprobe..." \
+ && tar -xJf /tmp/ffmpeg.tar.xz -C /app/bin --strip-components=1 "ffmpeg-*-amd64-static/ffmpeg" "ffmpeg-*-amd64-static/ffprobe" \
+ && rm /tmp/ffmpeg.tar.xz \
+ && chmod +x /app/bin/ffmpeg /app/bin/ffprobe /app/bin/yt-dlp
 
-# Copy dependencies first (for cache)
-COPY package.json pnpm-lock.yaml* ./
+# (Important) Add /app/bin to PATH so the binaries are found by the app
+ENV PATH="/app/bin:${PATH}"
 
-# Install dependencies (skip frozen to avoid lockfile mismatch errors)
-RUN pnpm install --no-frozen-lockfile --ignore-scripts
+# (Optional) Set environment variables for fluent-ffmpeg to pick up binary locations
+ENV FFMPEG_PATH="/app/bin/ffmpeg" \
+    FFPROBE_PATH="/app/bin/ffprobe"
 
-# Rebuild modules that need postinstall (like ffmpeg-static)
-RUN pnpm rebuild ffmpeg-static yt-dlp-exec
-
-# Copy full source
-COPY . .
-
-# Ensure binaries are executable
-RUN chmod +x bin/yt-dlp bin/ffmpeg bin/ffprobe || true
-
-
-# Build Next.js app directly (remove vercel-build.sh reference)
-RUN pnpm build
-
-# Start app
-CMD ["pnpm", "start"]
+# ... (the rest of your Dockerfile, e.g. copying source if not done, and the CMD to run)
+CMD ["node", "dist/index.js"]
