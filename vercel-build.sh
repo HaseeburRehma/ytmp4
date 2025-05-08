@@ -11,7 +11,7 @@ echo "Created bin directory at $BIN_DIR"
 # Run both Node scripts to install FFmpeg and yt-dlp
 echo "Running FFmpeg and yt-dlp setup scripts..."
 node scripts/download-ffmpeg.js
-node scripts/install-yt-dlp.js
+node scripts/install-yt-dlp.js   
 
 # Create .env.production with the correct paths
 echo "Creating environment variables file..."
