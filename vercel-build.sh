@@ -36,7 +36,7 @@ FFPROBE_PATH=bin/ffprobe
 
 # Socket.IO
 NEXT_PUBLIC_SOCKET_URL=https://youtube-downloader-ashy-ten.vercel.app
-EOL
+
 
 echo "Environment variables set in .env.production"
 echo "Build script completed successfully"
