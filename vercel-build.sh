@@ -36,8 +36,8 @@ NEXT_PUBLIC_APP_URL=https://youtube-downloader-l3s9vvt4q.vercel.app
 
 # Tool paths
 YT_DLP_PATH=$BIN_DIR/yt-dlp
-FFMPEG_PATH=ffmpeg
-FFPROBE_PATH=ffprobe
+FFMPEG_PATH=$BIN_DIR/ffmpeg
+FFPROBE_PATH=$BIN_DIR/ffprobe
 
 # Socket.IO
 NEXT_PUBLIC_SOCKET_URL=https://youtube-downloader-l3s9vvt4q.vercel.app
