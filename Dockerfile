@@ -1,21 +1,21 @@
-# ... (earlier stages like build omitted for brevity)
+# Use Node.js Alpine base
+FROM node:18-alpine
 
-FROM node:18-alpine AS runner
+# Set working directory
 WORKDIR /app
 
-# (Optional) Copy built application from builder stage:
-# COPY --from=builder /app/dist ./dist
-# COPY --from=builder /app/node_modules ./node_modules
-# COPY --from=builder /app/package.json ./package.json
+# Install required tools
+RUN apk add --no-cache curl xz
 
-# Install tools for downloading and extracting
-RUN apk add --no-cache curl xz \
-  && mkdir -p /app/bin \
-  && echo "Downloading yt-dlp..." \
-  && curl -L "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux" -o /app/bin/yt-dlp \
-  && chmod +x /app/bin/yt-dlp \
-  && echo "Downloading FFmpeg static build..." \
-  && curl -L "https://johnvansickle.com/ffmpeg/builds/ffmpeg-release-amd64-static.tar.xz" -o /tmp/ffmpeg.tar.xz \
+# Create binary directory
+RUN mkdir -p /app/bin
+
+# Download yt-dlp
+RUN curl -L "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux" -o /app/bin/yt-dlp \
+  && chmod +x /app/bin/yt-dlp
+
+# Download and extract FFmpeg static build
+RUN curl -L "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz" -o /tmp/ffmpeg.tar.xz \
   && mkdir -p /tmp/ffmpeg \
   && tar -xJf /tmp/ffmpeg.tar.xz -C /tmp/ffmpeg \
   && cp /tmp/ffmpeg/ffmpeg-*/ffmpeg /app/bin/ \
@@ -23,13 +23,30 @@ RUN apk add --no-cache curl xz \
   && chmod +x /app/bin/ffmpeg /app/bin/ffprobe \
   && rm -rf /tmp/ffmpeg /tmp/ffmpeg.tar.xz
 
+# Make sure binaries are in PATH
+ENV PATH="/app/bin:$PATH"
 
-# (Important) Add /app/bin to PATH so the binaries are found by the app
-ENV PATH="/app/bin:${PATH}"
+# Set NODE_ENV
+ENV NODE_ENV=production
 
-# (Optional) Set environment variables for fluent-ffmpeg to pick up binary locations
-ENV FFMPEG_PATH="/app/bin/ffmpeg" \
-    FFPROBE_PATH="/app/bin/ffprobe"
+# Set up environment variables (if needed)
+# ENV DATABASE_URL=your_db_url
+# ENV REDIS_URL=your_redis_url
 
-# ... (the rest of your Dockerfile, e.g. copying source if not done, and the CMD to run)
-CMD ["node", "dist/index.js"]
+# Install PNPM globally
+RUN npm install -g pnpm@10.10.0
+
+# Copy dependency files first
+COPY package.json pnpm-lock.yaml* ./
+
+# Install deps (ignore scripts to skip postinstall)
+RUN pnpm install --no-frozen-lockfile --ignore-scripts
+
+# Copy the rest of the app
+COPY . .
+
+# Build app
+RUN pnpm build
+
+# Start app
+CMD ["pnpm", "start"]
