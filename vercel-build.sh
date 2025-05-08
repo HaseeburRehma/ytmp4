@@ -37,11 +37,20 @@ BASE_URL=https://youtube-downloader-ashy-ten.vercel.app
 ENABLE_CORS=false
 NEXT_PUBLIC_APP_URL=https://youtube-downloader-ashy-ten.vercel.app
 
-YT_DLP_PATH=bin/yt-dlp
-FFMPEG_PATH=bin/ffmpeg
-FFPROBE_PATH=bin/ffprobe
+# Create public/bin directory
+mkdir -p public/bin
+
+# Move the binaries there
+mv ffmpeg-*-static/ffmpeg public/bin/ffmpeg
+mv ffmpeg-*-static/ffprobe public/bin/ffprobe
+mv bin/yt-dlp public/bin/yt-dlp
+
+# Make them executable
+chmod +x public/bin/ffmpeg public/bin/ffprobe public/bin/yt-dlp
+
 
 NEXT_PUBLIC_SOCKET_URL=https://youtube-downloader-ashy-ten.vercel.app
 EOL
+export YT_DLP_PATH=bin/yt-dlp
 
 echo "📦 .env.production created successfully."
