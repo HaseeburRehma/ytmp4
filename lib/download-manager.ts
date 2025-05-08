@@ -7,7 +7,6 @@ import { spawn } from "child_process"
 import { EventEmitter } from "events"
 import { updateProgress } from "@/lib/global-store"
 import { config } from "@/lib/config"
-import ytdlp from "yt-dlp-exec"
 
 // In-memory store for active downloads
 interface DownloadRecord {
@@ -45,7 +44,7 @@ export class DownloadManager extends EventEmitter {
   constructor() {
     super()
     this.tempDir = config.ytdl.tempDir || path.join(os.tmpdir(), "youtube-downloader", "temp")
-    this.ytDlpPath = ytdlp as unknown as string
+    this.ytDlpPath = process.env.YT_DLP_PATH || "ytdlp"
 
     // Ensure temp directory exists
     try {
