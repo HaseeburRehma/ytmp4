@@ -4,6 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "postinstall": "node scripts/download-ffmpeg.js && node scripts/download-ytdlp.js",
     "build": "bash ./vercel-build.sh && next build",
     "start": "next start",
     "lint": "next lint"
