@@ -1,36 +1,27 @@
-# Use Node 18 on Alpine
 FROM node:18-alpine
 
-# Set working directory
 WORKDIR /app
 
-# Install bash, curl, and PNPM
-RUN apk add --no-cache bash curl && npm install -g pnpm@10.10.0
+# Install PNPM and bash
+RUN npm install -g pnpm@10.10.0 && apk add --no-cache bash
 
-# Copy only dependency files for caching
+# Copy dependencies first (for cache)
 COPY package.json pnpm-lock.yaml* ./
 
-# Install dependencies
+# Install dependencies (skip frozen to avoid lockfile mismatch errors)
 RUN pnpm install --no-frozen-lockfile --ignore-scripts
 
-# Rebuild packages that need postinstall (ffmpeg, yt-dlp)
+# Rebuild modules that need postinstall (like ffmpeg-static)
 RUN pnpm rebuild ffmpeg-static yt-dlp-exec
 
-# Copy the rest of the app
+# Copy full source
 COPY . .
 
-# Manually download yt-dlp + ffmpeg + ffprobe (in case they aren't in node_modules)
-RUN mkdir -p bin && \
-    curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o bin/yt-dlp && \
-    curl -L https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz -o ffmpeg.tar.xz && \
-    tar -xf ffmpeg.tar.xz && \
-    cp ffmpeg-*-static/ffmpeg bin/ffmpeg && \
-    cp ffmpeg-*-static/ffprobe bin/ffprobe && \
-    chmod +x bin/* && \
-    rm -rf ffmpeg.tar.xz ffmpeg-*-static
+# Ensure binaries are executable
+RUN chmod +x bin/* || true
 
-# Run custom build script (uses bash)
-RUN bash ./vercel-build.sh && pnpm build
+# Build Next.js app directly (remove vercel-build.sh reference)
+RUN pnpm build
 
-# Set the default command
+# Start app
 CMD ["pnpm", "start"]
