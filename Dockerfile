@@ -4,28 +4,27 @@ FROM node:18-alpine
 # Set working directory
 WORKDIR /app
 
-# Install PNPM globally
+# Install PNPM globally (match your local version)
 RUN npm install -g pnpm@10.10.0
 
-# Copy only dependency files first (for cache optimization)
+# Copy only dependency files first (for caching)
 COPY package.json pnpm-lock.yaml* ./
 
 # Install dependencies
-RUN pnpm install --frozen-lockfile --ignore-scripts
+# Use --no-frozen-lockfile to avoid mismatch errors
+RUN pnpm install --no-frozen-lockfile --ignore-scripts
 
-# Manually allow required postinstall scripts
+# Rebuild required postinstall packages
 RUN pnpm rebuild ffmpeg-static yt-dlp-exec
 
-# Copy the rest of the code
+# Copy the rest of the app code
 COPY . .
 
-# Make binaries executable if they exist (for Linux)
+# Ensure binaries are executable
 RUN chmod +x bin/yt-dlp bin/ffmpeg bin/ffprobe || true
 
-# Build app if needed
+# Build app
 RUN pnpm build
 
-# Run app
-# Build app if needed
-
+# Start app
 CMD ["pnpm", "start"]
