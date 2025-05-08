@@ -44,9 +44,10 @@ export class DownloadManager extends EventEmitter {
   constructor() {
     super()
     this.tempDir = config.ytdl.tempDir || path.join(os.tmpdir(), "youtube-downloader", "temp")
-    this.ytDlpPath = process.env.YT_DLP_PATH || "ytdlp"
+    const isProd = process.env.NODE_ENV === "production"
+    this.ytDlpPath = isProd ? path.resolve("bin/yt-dlp") : path.resolve(__dirname, "../bin/yt-dlp")
     console.log("yt-dlp path:", this.ytDlpPath)
-
+  
 
     // Ensure temp directory exists
     try {
