@@ -26,4 +26,6 @@ RUN chmod +x bin/yt-dlp bin/ffmpeg bin/ffprobe || true
 RUN pnpm build
 
 # Run app
+# Build app if needed
+
 CMD ["pnpm", "start"]
