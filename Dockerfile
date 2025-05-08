@@ -5,7 +5,7 @@ FROM node:18-alpine
 WORKDIR /app
 
 # Install PNPM globally
-RUN npm install -g pnpm@8.6.0
+RUN npm install -g pnpm@10.10.0
 
 # Copy only dependency files first (for cache optimization)
 COPY package.json pnpm-lock.yaml* ./
