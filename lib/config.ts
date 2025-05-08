@@ -1,33 +1,23 @@
-import os from "os"
 import path from "path"
-import fs from "fs"
+import os from "os"
 
 const isProd = process.env.NODE_ENV === "production"
-const BIN_DIR = "/app/bin"
-
-// Validate binary presence with proper type annotation and error suppression
-const binaries: string[] = ["yt-dlp", "ffmpeg", "ffprobe"]
-for (const binary of binaries) {
-  const binPath = path.join(BIN_DIR, binary)
-  if (!fs.existsSync(binPath)) {
-    console.warn(`⚠️  ${binary} not found at ${binPath} — make sure it's bundled correctly.`)
-  }
-}
+const BIN_DIR = isProd ? "/app/bin" : path.resolve(__dirname, "../bin")
 
 export const config = {
   ytdl: {
-    ytDlpPath: isProd ? path.join(BIN_DIR, "yt-dlp") : process.env.YT_DLP_PATH ?? "yt-dlp",
-    ffmpegPath: isProd ? path.join(BIN_DIR, "ffmpeg") : process.env.FFMPEG_PATH ?? "ffmpeg",
-    ffprobePath: isProd ? path.join(BIN_DIR, "ffprobe") : process.env.FFPROBE_PATH ?? "ffprobe",
+    ytDlpPath: path.join(BIN_DIR, process.platform === "win32" ? "yt-dlp.exe" : "yt-dlp"),
+    ffmpegPath: path.join(BIN_DIR, process.platform === "win32" ? "ffmpeg.exe" : "ffmpeg"),
+    ffprobePath: path.join(BIN_DIR, process.platform === "win32" ? "ffprobe.exe" : "ffprobe"),
     maxConcurrentDownloads: 5,
     tempDir: path.join(os.tmpdir(), "youtube-downloader", "temp"),
-    cleanupInterval: 5 * 60 * 1000,
-    maxFileAge: 10 * 60 * 1000,
+    cleanupInterval: 300000,
+    maxFileAge: 600000,
   },
   redis: {
-    enabled: Boolean(process.env.REDIS_URL),
+    enabled: !!process.env.REDIS_URL,
     url: process.env.REDIS_URL,
-    host: process.env.REDIS_HOST ?? "localhost",
-    port: parseInt(process.env.REDIS_PORT ?? "6379", 10),
+    host: process.env.REDIS_HOST || "localhost",
+    port: Number.parseInt(process.env.REDIS_PORT || "6379", 10),
   },
 }
