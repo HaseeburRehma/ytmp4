@@ -46,6 +46,8 @@
     "date-fns": "latest",
     "embla-carousel-react": "8.5.1",
     "events": "latest",
+    "ffmpeg-static": "^5.2.0",
+    "ffprobe-static": "^3.1.0",
     "fluent-ffmpeg": "latest",
     "fs": "latest",
     "http": "latest",
@@ -74,6 +76,7 @@
     "zod": "^3.24.1"
   },
   "devDependencies": {
+    "@types/fluent-ffmpeg": "^2.1.27",
     "@types/node": "^22",
     "@types/react": "^19",
     "@types/react-dom": "^19",
