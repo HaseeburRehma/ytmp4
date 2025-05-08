@@ -3,13 +3,13 @@ set -e
 
 echo "🔧 Starting Vercel build script..."
 
-# Create bin folder
+# Create bin directory
 mkdir -p bin
 
-# Download yt-dlp (no extension, Linux binary)
+# Download yt-dlp (Linux binary, no extension)
 curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o bin/yt-dlp
 
-# Download and extract static FFmpeg (Linux 64-bit)
+# Download and extract FFmpeg static build
 curl -L https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz -o ffmpeg.tar.xz
 tar -xf ffmpeg.tar.xz
 
@@ -17,40 +17,25 @@ tar -xf ffmpeg.tar.xz
 mv ffmpeg-*-static/ffmpeg bin/ffmpeg
 mv ffmpeg-*-static/ffprobe bin/ffprobe
 
-# Make all binaries executable
+# Make binaries executable
 chmod +x bin/yt-dlp bin/ffmpeg bin/ffprobe
 
 # Cleanup
 rm -rf ffmpeg-*-static ffmpeg.tar.xz
 
-echo "✅ yt-dlp, ffmpeg, ffprobe set up in ./bin"
-
-# Create .env.production
+# Create .env.production file
 cat > .env.production << EOL
-DATABASE_URL=${DATABASE_URL}
-
+YT_DLP_PATH=bin/yt-dlp
+FFMPEG_PATH=bin/ffmpeg
+FFPROBE_PATH=bin/ffprobe
 REDIS_KEY_PREFIX=ytdl:
 ENABLE_WORKER=false
 USE_QUEUE=false
-
+DATABASE_URL=${DATABASE_URL}
 BASE_URL=https://youtube-downloader-ashy-ten.vercel.app
 ENABLE_CORS=false
 NEXT_PUBLIC_APP_URL=https://youtube-downloader-ashy-ten.vercel.app
-
-# Create public/bin directory
-mkdir -p public/bin
-
-# Move the binaries there
-mv ffmpeg-*-static/ffmpeg public/bin/ffmpeg
-mv ffmpeg-*-static/ffprobe public/bin/ffprobe
-mv bin/yt-dlp public/bin/yt-dlp
-
-# Make them executable
-chmod +x public/bin/ffmpeg public/bin/ffprobe public/bin/yt-dlp
-
-
 NEXT_PUBLIC_SOCKET_URL=https://youtube-downloader-ashy-ten.vercel.app
 EOL
-export YT_DLP_PATH=bin/yt-dlp
 
-echo "📦 .env.production created successfully."
+echo "✅ Binaries installed and .env.production created."
