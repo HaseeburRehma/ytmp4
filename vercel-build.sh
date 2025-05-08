@@ -15,7 +15,7 @@ node scripts/install-yt-dlp.js
 
 # Create .env.production with the correct paths
 echo "Creating environment variables file..."
-cat > .env.production << EOL
+
 # Database
 DATABASE_URL=${DATABASE_URL}
 
