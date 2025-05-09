@@ -53,6 +53,9 @@ RUN curl -L "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-stat
   chmod +x /app/bin/ffmpeg /app/bin/ffprobe && \
   rm -rf /tmp/ffmpeg /tmp/ffmpeg.tar.xz
 
+  # Install PNPM again in the final image
+RUN npm install -g pnpm@10.10.0
+
 # Add binaries to PATH
 ENV PATH="/app/bin:$PATH"
 
@@ -63,4 +66,4 @@ ENV NODE_ENV=production
 COPY --from=builder /app /app
 
 # Start the app
-CMD ["pnpm", "start"]
+CMD ["node", "build/index.js"]
