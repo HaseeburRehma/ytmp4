@@ -66,4 +66,4 @@ ENV NODE_ENV=production
 COPY --from=builder /app /app
 
 # Start the app
-CMD ["node", "build/index.js"]
+CMD ["pnpm", "start"]
