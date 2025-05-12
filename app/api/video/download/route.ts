@@ -6,6 +6,7 @@ import path from "path"
 import os from "os"
 import { config } from "@/lib/config"
 import { convertJsonCookiesToNetscape } from "@/lib/cookie-converter"
+import { proxyManager } from "@/lib/proxy-manager"
 
 // Global store for download tasks
 const downloadTasks = new Map()
@@ -97,7 +98,7 @@ export async function POST(request: NextRequest) {
   }
 }
 
-async function startDownloadProcess(taskId: string, url: string, format: string) {
+async function startDownloadProcess(taskId: string, url: string, format: string, retryCount = 0) {
   try {
     // Get video title for the filename
     let videoTitle = ""
@@ -105,15 +106,37 @@ async function startDownloadProcess(taskId: string, url: string, format: string)
       const ytDlpPath = config.ytdl.ytDlpPath
       const cookiesPath = await createCookiesFile()
 
-      const titleProcess = spawn(ytDlpPath, [
+      // Generate a random user agent
+      const userAgents = [
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/115.0",
+      ]
+      const randomUserAgent = userAgents[Math.floor(Math.random() * userAgents.length)]
+
+      // Get proxy arguments
+      const proxyArgs = proxyManager.getProxyArgs()
+
+      const titleArgs = [
         "--get-title",
         "--no-warnings",
         "--cookies",
         cookiesPath,
         "--user-agent",
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        url,
-      ])
+        randomUserAgent,
+        "--geo-bypass",
+        "--no-check-certificate",
+      ]
+
+      // Add proxy if available
+      if (proxyArgs.length > 0) {
+        titleArgs.push(...proxyArgs)
+      }
+
+      // Add URL as the last argument
+      titleArgs.push(url)
+
+      const titleProcess = spawn(ytDlpPath, titleArgs)
 
       let titleOutput = ""
       titleProcess.stdout.on("data", (data) => {
@@ -162,8 +185,94 @@ async function startDownloadProcess(taskId: string, url: string, format: string)
     // Get cookies file
     const cookiesPath = await createCookiesFile()
 
+    // Generate a random user agent
+    const userAgents = [
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/115.0",
+    ]
+    const randomUserAgent = userAgents[Math.floor(Math.random() * userAgents.length)]
+
     // Prepare yt-dlp arguments
-    const ytDlpArgs = getYtDlpArgs(url, format, outputPath, isAudioOnly, cookiesPath)
+    const ytDlpArgs = [
+      "--newline",
+      "--progress",
+      "--no-playlist",
+      "--no-warnings",
+      "--verbose",
+      "--cookies",
+      cookiesPath,
+      "--referer",
+      "https://www.youtube.com/",
+      "--user-agent",
+      randomUserAgent,
+      "--add-header",
+      "Accept-Language:en-US,en;q=0.9",
+      "--add-header",
+      "Accept:text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8",
+      "--add-header",
+      "Sec-Fetch-Mode:navigate",
+      "--add-header",
+      "Sec-Fetch-Site:none",
+      "--add-header",
+      "Sec-Fetch-User:?1",
+      "--add-header",
+      "Upgrade-Insecure-Requests:1",
+      "--geo-bypass",
+      "--no-check-certificate",
+      "--extractor-retries",
+      "5",
+      "--sleep-requests",
+      "1",
+      "--sleep-interval",
+      "1",
+      "--max-sleep-interval",
+      "5",
+      "--ignore-errors",
+    ]
+
+    // Add proxy if available
+    const proxyArgs = proxyManager.getProxyArgs()
+    if (proxyArgs.length > 0) {
+      ytDlpArgs.push(...proxyArgs)
+      console.log(`Using proxy for download: ${proxyArgs.join(" ")}`)
+    }
+
+    if (isAudioOnly) {
+      // Audio format
+      ytDlpArgs.push("--extract-audio", "--audio-format", "mp3")
+
+      // Audio quality based on format
+      if (format === "mp3_320") {
+        ytDlpArgs.push("--audio-quality", "0") // Best quality
+      } else if (format === "mp3_256") {
+        ytDlpArgs.push("--audio-quality", "2") // Medium quality
+      } else {
+        ytDlpArgs.push("--audio-quality", "5") // Lower quality
+      }
+    } else {
+      // Video format
+      if (format === "mp4_best") {
+        ytDlpArgs.push("--format", "best[ext=mp4]/best")
+      } else if (format === "mp4_1024") {
+        ytDlpArgs.push(
+          "--format",
+          "bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[height<=1080][ext=mp4]/best",
+        )
+      } else if (format === "mp4_720") {
+        ytDlpArgs.push("--format", "bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720][ext=mp4]/best")
+      } else {
+        ytDlpArgs.push("--format", "best[ext=mp4]/best")
+      }
+
+      ytDlpArgs.push("--merge-output-format", "mp4")
+    }
+
+    // Output path
+    ytDlpArgs.push("--output", outputPath)
+
+    // URL must be the last argument
+    ytDlpArgs.push(url)
 
     console.log(`Starting yt-dlp with args:`, ytDlpArgs)
 
@@ -220,7 +329,31 @@ async function startDownloadProcess(taskId: string, url: string, format: string)
 
     // Handle errors
     ytDlpProcess.stderr.on("data", (data) => {
-      console.error(`yt-dlp process error: ${data.toString()}`)
+      const errorOutput = data.toString()
+      console.error(`yt-dlp process error: ${errorOutput}`)
+
+      // Check for bot detection or 403 errors
+      if (
+        errorOutput.includes("Sign in to confirm you're not a bot") ||
+        errorOutput.includes("HTTP Error 403") ||
+        errorOutput.includes("Forbidden")
+      ) {
+        // If we have retries left, try with a different proxy
+        if (retryCount < 3) {
+          console.log(`Bot detection or 403 error, rotating proxy and retrying download (${retryCount + 1}/3)...`)
+
+          // Kill the current process
+          ytDlpProcess.kill()
+
+          // Rotate proxy
+          proxyManager.rotateProxy()
+
+          // Retry with new proxy
+          setTimeout(() => {
+            startDownloadProcess(taskId, url, format, retryCount + 1)
+          }, 1000)
+        }
+      }
     })
 
     // Handle process completion
@@ -237,9 +370,17 @@ async function startDownloadProcess(taskId: string, url: string, format: string)
           task.downloadUrl = `/api/video/download/${taskId}.${outputFormat}`
           console.log(`Download ${taskId} completed successfully`)
         } else {
-          // Download failed
-          task.status = "failed"
-          console.log(`Download ${taskId} failed with code ${code}`)
+          // If this was a retry failure, mark the proxy as failed
+          if (retryCount > 0) {
+            proxyManager.markCurrentProxyAsFailed()
+          }
+
+          // If we have retries left and it's a 403 error, we'll retry in the stderr handler
+          // Otherwise, mark as failed
+          if (retryCount >= 3) {
+            task.status = "failed"
+            console.log(`Download ${taskId} failed with code ${code} after ${retryCount} retries`)
+          }
         }
 
         downloadTasks.set(taskId, task)
@@ -269,73 +410,6 @@ async function startDownloadProcess(taskId: string, url: string, format: string)
       downloadTasks.set(taskId, task)
     }
   }
-}
-
-function getYtDlpArgs(url: string, format: string, outputPath: string, isAudioOnly: boolean, cookiesPath: string) {
-  const baseArgs = [
-    "--newline",
-    "--progress",
-    "--no-playlist",
-    "--no-warnings",
-    "--verbose",
-    "--cookies",
-    cookiesPath,
-    "--referer",
-    "https://www.youtube.com/",
-  ]
-
-  // Add user agent to avoid bot detection
-  baseArgs.push(
-    "--user-agent",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-  )
-  baseArgs.push("--add-header", "Accept-Language:en-US,en;q=0.9")
-  baseArgs.push(
-    "--add-header",
-    "Accept:text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8",
-  )
-  baseArgs.push("--add-header", "Sec-Fetch-Mode:navigate")
-  baseArgs.push("--add-header", "Sec-Fetch-Site:none")
-  baseArgs.push("--add-header", "Sec-Fetch-User:?1")
-  baseArgs.push("--add-header", "Upgrade-Insecure-Requests:1")
-  baseArgs.push("--geo-bypass")
-  baseArgs.push("--extractor-retries", "3")
-  baseArgs.push("--socket-timeout", "30")
-
-  if (isAudioOnly) {
-    // Audio format
-    baseArgs.push("--extract-audio", "--audio-format", "mp3")
-
-    // Audio quality based on format
-    if (format === "mp3_320") {
-      baseArgs.push("--audio-quality", "0") // Best quality
-    } else if (format === "mp3_256") {
-      baseArgs.push("--audio-quality", "2") // Medium quality
-    } else {
-      baseArgs.push("--audio-quality", "5") // Lower quality
-    }
-  } else {
-    // Video format
-    if (format === "mp4_best") {
-      baseArgs.push("--format", "best[ext=mp4]/best")
-    } else if (format === "mp4_1024") {
-      baseArgs.push("--format", "bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[height<=1080][ext=mp4]/best")
-    } else if (format === "mp4_720") {
-      baseArgs.push("--format", "bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720][ext=mp4]/best")
-    } else {
-      baseArgs.push("--format", "best[ext=mp4]/best")
-    }
-
-    baseArgs.push("--merge-output-format", "mp4")
-  }
-
-  // Output path
-  baseArgs.push("--output", outputPath)
-
-  // URL must be the last argument
-  baseArgs.push(url)
-
-  return baseArgs
 }
 
 export async function GET(request: NextRequest) {

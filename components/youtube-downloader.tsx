@@ -19,6 +19,7 @@ export function YoutubeDownloader() {
   const [url, setUrl] = useState("")
   const [isValidUrl, setIsValidUrl] = useState(false)
   const [showError, setShowError] = useState(false)
+  const [retryCount, setRetryCount] = useState(0)
   const { toast } = useToast()
 
   const { videoInfo, isLoading: isLoadingInfo, error: videoInfoError, fetchVideoInfo } = useVideoInfo()
@@ -55,6 +56,7 @@ export function YoutubeDownloader() {
     }
 
     setShowError(false)
+    setRetryCount(0)
 
     try {
       await fetchVideoInfo(url)
@@ -64,6 +66,31 @@ export function YoutubeDownloader() {
       toast({
         title: "Error",
         description: "Failed to fetch video information. Please try again.",
+        variant: "destructive",
+      })
+    }
+  }
+
+  const handleRetry = async () => {
+    if (!isValidUrl) return
+
+    setRetryCount((prev) => prev + 1)
+    setShowError(false)
+
+    try {
+      toast({
+        title: "Retrying",
+        description: "Attempting to fetch video information again...",
+      })
+
+      await fetchVideoInfo(url)
+    } catch (error) {
+      console.error("Error retrying fetch:", error)
+      setShowError(true)
+
+      toast({
+        title: "Error",
+        description: "Still unable to fetch video information. Please try a different video.",
         variant: "destructive",
       })
     }
@@ -128,11 +155,21 @@ export function YoutubeDownloader() {
       {showError && (
         <Alert variant="destructive">
           <AlertCircle className="h-4 w-4" />
-          <AlertTitle>Error</AlertTitle>
+          <AlertTitle>YouTube Bot Detection</AlertTitle>
           <AlertDescription>
             YouTube is detecting our request as automated. We're showing limited information.
-            <br />
-            <span className="text-xs mt-1 block">Note: Some videos may be restricted or require authentication.</span>
+            <div className="mt-2 flex justify-between items-center">
+              <span className="text-xs">Some videos may be restricted or require authentication.</span>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleRetry}
+                disabled={retryCount >= 3 || isLoadingInfo}
+                className="border-red-800 text-white hover:bg-red-800/20"
+              >
+                {isLoadingInfo ? <Loader2 className="h-3 w-3 animate-spin" /> : "Try Again"}
+              </Button>
+            </div>
           </AlertDescription>
         </Alert>
       )}

@@ -6,6 +6,7 @@ import path from "path"
 import fs from "fs"
 import os from "os"
 import { convertJsonCookiesToNetscape } from "@/lib/cookie-converter"
+import { proxyManager } from "@/lib/proxy-manager"
 
 export const runtime = "nodejs"
 export const maxDuration = 30
@@ -61,7 +62,7 @@ async function createCookiesFile(): Promise<string> {
 }
 
 // Add this helper function to run yt-dlp when other methods fail
-async function getInfoWithYtDlp(url: string): Promise<any> {
+async function getInfoWithYtDlp(url: string, retryCount = 0): Promise<any> {
   return new Promise(async (resolve, reject) => {
     try {
       // Create cookies file
@@ -72,6 +73,16 @@ async function getInfoWithYtDlp(url: string): Promise<any> {
 
       console.log(`Using yt-dlp from: ${ytDlpPath}`)
 
+      // Generate a random user agent
+      const userAgents = [
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/115.0",
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0",
+      ]
+      const randomUserAgent = userAgents[Math.floor(Math.random() * userAgents.length)]
+
       // Add cookies and user-agent to bypass YouTube's bot detection
       const args = [
         "--dump-json",
@@ -80,7 +91,7 @@ async function getInfoWithYtDlp(url: string): Promise<any> {
         "--cookies",
         cookiesPath,
         "--user-agent",
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        randomUserAgent,
         "--add-header",
         "Accept-Language:en-US,en;q=0.9",
         "--add-header",
@@ -96,9 +107,25 @@ async function getInfoWithYtDlp(url: string): Promise<any> {
         "--geo-bypass",
         "--no-check-certificate",
         "--extractor-retries",
-        "3",
-        url,
+        "5",
+        "--sleep-requests",
+        "1",
+        "--sleep-interval",
+        "1",
+        "--max-sleep-interval",
+        "5",
+        "--ignore-errors",
       ]
+
+      // Add proxy if available
+      const proxyArgs = proxyManager.getProxyArgs()
+      if (proxyArgs.length > 0) {
+        args.push(...proxyArgs)
+        console.log(`Using proxy: ${proxyArgs.join(" ")}`)
+      }
+
+      // Add URL as the last argument
+      args.push(url)
 
       console.log(`Executing: ${ytDlpPath} ${args.join(" ")}`)
 
@@ -117,7 +144,7 @@ async function getInfoWithYtDlp(url: string): Promise<any> {
         console.log(`yt-dlp stderr: ${data.toString()}`)
       })
 
-      ytDlpProcess.on("close", (code: number | null) => {
+      ytDlpProcess.on("close", async (code: number | null) => {
         console.log(`yt-dlp process exited with code ${code}`)
         if (code === 0 && output.trim()) {
           try {
@@ -136,12 +163,61 @@ async function getInfoWithYtDlp(url: string): Promise<any> {
         } else {
           console.error(`yt-dlp exited with code ${code}: ${errorOutput}`)
 
-          // If we get a bot detection error, try to extract minimal info
-          if (errorOutput.includes("Sign in to confirm you're not a bot")) {
+          // Check for specific errors
+          if (
+            errorOutput.includes("Sign in to confirm you're not a bot") ||
+            errorOutput.includes("HTTP Error 403") ||
+            errorOutput.includes("Forbidden")
+          ) {
+            // If we have retries left, try with a different proxy
+            if (retryCount < 3) {
+              console.log(`Bot detection or 403 error, rotating proxy and retrying (${retryCount + 1}/3)...`)
+              proxyManager.rotateProxy()
+              try {
+                const result = await getInfoWithYtDlp(url, retryCount + 1)
+                resolve(result)
+                return
+              } catch (retryError) {
+                console.error(`Retry ${retryCount + 1} failed:`, retryError)
+              }
+            }
+
+            // If we've exhausted retries or as a fallback, try to extract minimal info
             try {
               const videoId = extractVideoId(url)
               if (videoId) {
                 console.log(`Bot detection triggered, falling back to minimal info for video ID: ${videoId}`)
+
+                // Try to get title from oEmbed
+                try {
+                  const response = await fetch(
+                    `https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId}&format=json`,
+                    {
+                      headers: {
+                        "User-Agent": randomUserAgent,
+                        "Accept-Language": "en-US,en;q=0.9",
+                        Accept: "application/json",
+                        Referer: "https://www.google.com/",
+                      },
+                    },
+                  )
+
+                  if (response.ok) {
+                    const data = await response.json()
+                    resolve({
+                      title: data.title,
+                      thumbnail: `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg`,
+                      uploader: data.author_name,
+                      duration: 0,
+                      view_count: 0,
+                    })
+                    return
+                  }
+                } catch (oembedError) {
+                  console.error("oEmbed fallback failed:", oembedError)
+                }
+
+                // If oEmbed fails, use minimal info
                 resolve({
                   title: `YouTube Video (${videoId})`,
                   thumbnail: `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`,
@@ -169,7 +245,7 @@ async function getInfoWithYtDlp(url: string): Promise<any> {
       const timeoutId = setTimeout(() => {
         ytDlpProcess.kill()
         reject(new Error("yt-dlp process timed out"))
-      }, 15000)
+      }, 20000) // Increased timeout
 
       // Clear timeout when process ends
       ytDlpProcess.on("close", () => {
@@ -262,12 +338,19 @@ export async function POST(request: NextRequest) {
           throw new Error("Could not extract video ID")
         }
 
+        // Generate a random user agent
+        const userAgents = [
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+          "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/115.0",
+        ]
+        const randomUserAgent = userAgents[Math.floor(Math.random() * userAgents.length)]
+
         const response = await fetch(
           `https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId}&format=json`,
           {
             headers: {
-              "User-Agent":
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+              "User-Agent": randomUserAgent,
               "Accept-Language": "en-US,en;q=0.9",
               Accept: "application/json",
               Referer: "https://www.google.com/",
