@@ -1,239 +1,371 @@
 import { type NextRequest, NextResponse } from "next/server"
+import { spawn } from "child_process"
+import { randomUUID } from "crypto"
 import fs from "fs"
 import path from "path"
-import { downloadManager } from "@/lib/download-manager"
-import { config } from "@/lib/config"
-import { getProgress } from "@/lib/global-store"
 import os from "os"
+import { config } from "@/lib/config"
 
-export const runtime = "nodejs"
+// Global store for download tasks
+const downloadTasks = new Map()
 
-export async function GET(request: NextRequest) {
+// Create a cookies file from the environment variable
+async function createCookiesFile(): Promise<string> {
   try {
-    const taskId = request.nextUrl.searchParams.get("taskId")
-
-    if (!taskId) {
-      console.error("Download request missing taskId parameter")
-      return NextResponse.json({ error: "Task ID is required" }, { status: 400 })
+    // Create a temporary directory for cookies if it doesn't exist
+    const cookiesDir = path.join(os.tmpdir(), "youtube-downloader", "cookies")
+    if (!fs.existsSync(cookiesDir)) {
+      fs.mkdirSync(cookiesDir, { recursive: true })
     }
 
-    console.log(`Download request received for task ${taskId}`)
+    // Create a temporary cookies file
+    const cookiesPath = path.join(cookiesDir, "youtube-cookies.txt")
 
-    // Get download info - first check the download manager
-    const download = downloadManager.getDownload(taskId)
+    // Check if we have cookies in the environment variable
+    const cookiesContent = process.env.YOUTUBE_COOKIES || ""
 
-    // If found in download manager, use that
-    if (download && download.status === "completed") {
-      let fileToServe = download.outputFile
-
-      // Check if the output file exists
-      if (!fileToServe || !fs.existsSync(fileToServe)) {
-        console.log(`Output file not found: ${fileToServe}, checking for original file`)
-
-        // Try to use the original file as fallback
-        if (download.originalFile && fs.existsSync(download.originalFile)) {
-          fileToServe = download.originalFile
-          console.log(`Using original file as fallback: ${fileToServe}`)
-        } else {
-          console.error(`No valid file found for download ${taskId}`)
-          return NextResponse.json({ error: "File not found" }, { status: 404 })
-        }
-      }
-
-      console.log(`Serving file: ${fileToServe}`)
-
-      // Read the file as a buffer
-      const fileBuffer = fs.readFileSync(fileToServe)
-
-      // Set appropriate headers for browser download
-      const headers = new Headers()
-      headers.set("Content-Type", download.format.includes("mp3") ? "audio/mpeg" : "video/mp4")
-
-      // Create a safe filename from the title
-      const safeTitle = download.title
-        .replace(/[^\w\s-]/g, "")
-        .replace(/\s+/g, "-")
-        .toLowerCase()
-
-      const fileExt = download.format.includes("mp3") ? "mp3" : "mp4"
-      const filename = `${safeTitle}.${fileExt}`
-
-      headers.set("Content-Disposition", `attachment; filename="${filename}"`)
-      headers.set("Content-Length", fileBuffer.length.toString())
-
-      // Add cache control headers to prevent caching issues
-      headers.set("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate")
-      headers.set("Pragma", "no-cache")
-      headers.set("Expires", "0")
-
-      // Log the headers we're sending
-      console.log("Sending file with headers:", {
-        contentType: headers.get("Content-Type"),
-        contentDisposition: headers.get("Content-Disposition"),
-        contentLength: headers.get("Content-Length"),
-        fileSize: fileBuffer.length,
-      })
-
-      // Schedule file deletion after a delay
-      setTimeout(() => {
-        try {
-          if (fs.existsSync(fileToServe)) {
-            fs.unlinkSync(fileToServe)
-            console.log(`Temporary file deleted: ${fileToServe}`)
-          }
-        } catch (err) {
-          console.error(`Error deleting temporary file: ${fileToServe}`, err)
-        }
-      }, 300000) // 5 minute delay
-
-      return new NextResponse(fileBuffer, { headers })
-    }
-
-    // If not found in download manager, check the global progress store
-    const progressData = getProgress(taskId)
-    if (!progressData || progressData.status !== "completed") {
-      console.error(`Download not found or not completed for taskId ${taskId}`)
-      return NextResponse.json(
-        {
-          error: "Download not found or not completed",
-          status: progressData?.status || "unknown",
-        },
-        { status: 404 },
-      )
-    }
-
-    // Determine the temp directory
-    const tempDir = config.ytdl.tempDir || path.join(os.tmpdir(), "youtube-downloader", "temp")
-
-    // Ensure the directory exists
-    try {
-      fs.mkdirSync(tempDir, { recursive: true })
-      console.log(`Ensured temp directory exists: ${tempDir}`)
-    } catch (err) {
-      console.error(`Error creating temp directory ${tempDir}:`, err)
-      return NextResponse.json({ error: "Failed to access temporary directory" }, { status: 500 })
-    }
-
-    // Check if directory exists and is readable
-    if (!fs.existsSync(tempDir)) {
-      console.error(`Temp directory does not exist after creation attempt: ${tempDir}`)
-      return NextResponse.json({ error: "Temporary directory not accessible" }, { status: 500 })
-    }
-
-    console.log(`Searching for files in ${tempDir} with taskId ${taskId}`)
-
-    // List files in the directory
-    let files
-    try {
-      files = fs.readdirSync(tempDir)
-      console.log(`Found ${files.length} files in temp directory:`, files)
-    } catch (err) {
-      console.error(`Error reading temp directory ${tempDir}:`, err)
-      return NextResponse.json({ error: "Failed to read temporary directory" }, { status: 500 })
-    }
-
-    // Determine if we want MP3 or MP4
-    const isMP3 = progressData.format?.includes("mp3") || false
-
-    // Find the appropriate file based on format
-    let downloadedFile
-
-    if (isMP3) {
-      // For MP3, look for MP3 files first, then M4A files
-      downloadedFile =
-        files.find((file) => file.includes(taskId) && file.endsWith(".mp3")) ||
-        files.find((file) => file.includes(taskId) && file.endsWith(".m4a"))
+    if (cookiesContent) {
+      fs.writeFileSync(cookiesPath, cookiesContent)
+      console.log("Created cookies file from environment variable")
     } else {
-      // For MP4, look for MP4 files
-      downloadedFile = files.find((file) => file.includes(taskId) && file.endsWith(".mp4"))
-
-      // If no MP4 file found, look for any video file
-      if (!downloadedFile) {
-        downloadedFile = files.find(
-          (file) =>
-            file.includes(taskId) &&
-            (file.endsWith(".webm") || file.endsWith(".mkv") || file.endsWith(".avi") || file.endsWith(".mov")),
-        )
-      }
+      // Create a minimal cookies file with default values
+      const minimalCookies = `# Netscape HTTP Cookie File
+.youtube.com	TRUE	/	FALSE	1735689600	CONSENT	YES+cb
+.youtube.com	TRUE	/	FALSE	1735689600	VISITOR_INFO1_LIVE	random_alphanumeric_string
+.youtube.com	TRUE	/	FALSE	1735689600	YSC	random_alphanumeric_string
+.youtube.com	TRUE	/	FALSE	1735689600	GPS	1
+`
+      fs.writeFileSync(cookiesPath, minimalCookies)
+      console.log("Created minimal cookies file")
     }
 
-    if (!downloadedFile) {
-      console.error(`No matching file found for taskId ${taskId} in directory ${tempDir}`)
-      return NextResponse.json({ error: "Download file not found" }, { status: 404 })
+    return cookiesPath
+  } catch (error) {
+    console.error("Error creating cookies file:", error)
+    throw error
+  }
+}
+
+export async function POST(request: NextRequest) {
+  try {
+    const { url, format } = await request.json()
+
+    if (!url) {
+      return NextResponse.json({ error: "URL is required" }, { status: 400 })
     }
 
-    const outputFile = path.join(tempDir, downloadedFile)
-    console.log(`Found matching file: ${outputFile}`)
-
-    // Check if file exists and is readable
-    if (!fs.existsSync(outputFile)) {
-      console.error(`File not found: ${outputFile}`)
-      return NextResponse.json({ error: "File not found" }, { status: 404 })
+    if (!format) {
+      return NextResponse.json({ error: "Format is required" }, { status: 400 })
     }
 
-    // Read the file as a buffer
-    let fileBuffer
-    try {
-      fileBuffer = fs.readFileSync(outputFile)
-      console.log(`Successfully read file: ${outputFile}, size: ${fileBuffer.length} bytes`)
-    } catch (err) {
-      console.error(`Error reading file ${outputFile}:`, err)
-      return NextResponse.json({ error: "Failed to read file" }, { status: 500 })
-    }
+    // Generate a unique task ID
+    const taskId = randomUUID()
+    console.log(`Generated new task ID: ${taskId} for URL: ${url}`)
 
-    // Set appropriate headers for browser download
-    const headers = new Headers()
-    headers.set("Content-Type", isMP3 ? "audio/mpeg" : "video/mp4")
-
-    // Extract the original filename from the path
-    const originalFilename = path.basename(outputFile)
-
-    // If the filename contains the original title, use it
-    // Otherwise, create a generic filename
-    let filename = originalFilename
-    if (filename.startsWith(taskId)) {
-      // This is a temporary filename, create a better one
-      const ext = isMP3 ? "mp3" : "mp4"
-      filename = `youtube-download-${taskId}.${ext}`
-    }
-
-    headers.set("Content-Disposition", `attachment; filename="${filename}"`)
-    headers.set("Content-Length", fileBuffer.length.toString())
-
-    // Add cache control headers to prevent caching issues
-    headers.set("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate")
-    headers.set("Pragma", "no-cache")
-    headers.set("Expires", "0")
-
-    // Log the headers we're sending
-    console.log("Sending file with headers:", {
-      contentType: headers.get("Content-Type"),
-      contentDisposition: headers.get("Content-Disposition"),
-      contentLength: headers.get("Content-Length"),
-      fileSize: fileBuffer.length,
+    // Initialize task in global store
+    downloadTasks.set(taskId, {
+      id: taskId,
+      url,
+      format,
+      progress: 0,
+      status: "initializing",
+      startTime: Date.now(),
     })
 
-    // Schedule file deletion after a delay
-    setTimeout(() => {
-      try {
-        if (fs.existsSync(outputFile)) {
-          fs.unlinkSync(outputFile)
-          console.log(`Temporary file deleted: ${outputFile}`)
-        }
-      } catch (err) {
-        console.error(`Error deleting temporary file: ${outputFile}`, err)
-      }
-    }, 300000) // 5 minute delay
+    // Start the download process asynchronously
+    startDownloadProcess(taskId, url, format)
 
-    return new NextResponse(fileBuffer, { headers })
-  } catch (error) {
-    console.error("Error serving download:", error)
+    return NextResponse.json({ taskId })
+  } catch (error: any) {
+    console.error("Error starting download:", error)
     return NextResponse.json(
       {
-        error: "Failed to serve download",
-        details: error instanceof Error ? error.message : String(error),
+        error: error instanceof Error ? error.message : "Failed to start download",
       },
       { status: 500 },
     )
   }
+}
+
+async function startDownloadProcess(taskId: string, url: string, format: string) {
+  try {
+    // Get video title for the filename
+    let videoTitle = ""
+    try {
+      const ytDlpPath = config.ytdl.ytDlpPath
+      const cookiesPath = await createCookiesFile()
+
+      const titleProcess = spawn(ytDlpPath, [
+        "--get-title",
+        "--no-warnings",
+        "--cookies",
+        cookiesPath,
+        "--user-agent",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        url,
+      ])
+
+      let titleOutput = ""
+      titleProcess.stdout.on("data", (data) => {
+        titleOutput += data.toString()
+      })
+
+      await new Promise((resolve, reject) => {
+        titleProcess.on("close", (code) => {
+          if (code === 0) {
+            resolve(null)
+          } else {
+            reject(new Error(`Failed to get video title with code ${code}`))
+          }
+        })
+
+        titleProcess.on("error", reject)
+      })
+
+      videoTitle = titleOutput
+        .trim()
+        .replace(/[^\w\s]/gi, "")
+        .replace(/\s+/g, "_")
+    } catch (error) {
+      console.error(`Error getting video title for task ${taskId}:`, error)
+      videoTitle = `video_${taskId}`
+    }
+
+    // Update task with title
+    const task = downloadTasks.get(taskId)
+    if (task) {
+      task.title = videoTitle || `video_${taskId}`
+      downloadTasks.set(taskId, task)
+    }
+
+    // Ensure temp directory exists
+    const tempDir = config.ytdl.tempDir
+    if (!fs.existsSync(tempDir)) {
+      fs.mkdirSync(tempDir, { recursive: true })
+    }
+
+    // Determine output format and options
+    const isAudioOnly = format.startsWith("mp3")
+    const outputFormat = isAudioOnly ? "mp3" : "mp4"
+    const outputPath = path.join(tempDir, `${taskId}.${outputFormat}`)
+
+    // Get cookies file
+    const cookiesPath = await createCookiesFile()
+
+    // Prepare yt-dlp arguments
+    const ytDlpArgs = getYtDlpArgs(url, format, outputPath, isAudioOnly, cookiesPath)
+
+    console.log(`Starting yt-dlp with args:`, ytDlpArgs)
+
+    // Start the download process
+    const ytDlpProcess = spawn(config.ytdl.ytDlpPath, ytDlpArgs)
+
+    console.log(`Download started for task ${taskId}`)
+
+    // Update task status
+    if (downloadTasks.has(taskId)) {
+      const task = downloadTasks.get(taskId)
+      task.status = "processing"
+      task.progress = 0
+      downloadTasks.set(taskId, task)
+
+      console.log(
+        `Global progress stored for ${taskId}: ${task.progress}% (${task.status}) at ${new Date().toISOString()}`,
+      )
+    }
+
+    // Handle progress updates
+    ytDlpProcess.stdout.on("data", (data) => {
+      const output = data.toString()
+
+      // Parse progress information
+      const progressMatch = output.match(/(\d+\.\d+)%/)
+      if (progressMatch && progressMatch[1]) {
+        const progress = Number.parseFloat(progressMatch[1])
+
+        // Update task with progress
+        if (downloadTasks.has(taskId)) {
+          const task = downloadTasks.get(taskId)
+          task.progress = progress
+
+          // Extract ETA if available
+          const etaMatch = output.match(/ETA\s+(\d+:\d+)/)
+          if (etaMatch && etaMatch[1]) {
+            task.estimatedTime = etaMatch[1]
+          }
+
+          // Extract file size if available
+          const sizeMatch = output.match(/(\d+\.\d+)(K|M|G)iB/)
+          if (sizeMatch) {
+            task.fileSize = `${sizeMatch[1]} ${sizeMatch[2]}B`
+          }
+
+          downloadTasks.set(taskId, task)
+
+          // Emit progress event
+          console.log(`Progress for ${taskId}: ${progress}%`)
+        }
+      }
+    })
+
+    // Handle errors
+    ytDlpProcess.stderr.on("data", (data) => {
+      console.error(`yt-dlp process error: ${data.toString()}`)
+    })
+
+    // Handle process completion
+    ytDlpProcess.on("close", (code) => {
+      console.log(`yt-dlp process exited with code ${code}`)
+
+      if (downloadTasks.has(taskId)) {
+        const task = downloadTasks.get(taskId)
+
+        if (code === 0) {
+          // Download completed successfully
+          task.status = "completed"
+          task.progress = 100
+          task.downloadUrl = `/api/video/download/${taskId}.${outputFormat}`
+          console.log(`Download ${taskId} completed successfully`)
+        } else {
+          // Download failed
+          task.status = "failed"
+          console.log(`Download ${taskId} failed with code ${code}`)
+        }
+
+        downloadTasks.set(taskId, task)
+      }
+    })
+
+    // Handle process errors
+    ytDlpProcess.on("error", (error) => {
+      console.error(`yt-dlp process error: ${error.message}`)
+
+      if (downloadTasks.has(taskId)) {
+        const task = downloadTasks.get(taskId)
+        task.status = "failed"
+        task.error = error.message
+        downloadTasks.set(taskId, task)
+
+        console.log(`Download ${taskId} failed: ${error.message}`)
+      }
+    })
+  } catch (error) {
+    console.error(`Error in download process for task ${taskId}:`, error)
+
+    if (downloadTasks.has(taskId)) {
+      const task = downloadTasks.get(taskId)
+      task.status = "failed"
+      task.error = error instanceof Error ? error.message : "Unknown error"
+      downloadTasks.set(taskId, task)
+    }
+  }
+}
+
+function getYtDlpArgs(url: string, format: string, outputPath: string, isAudioOnly: boolean, cookiesPath: string) {
+  const baseArgs = [
+    "--newline",
+    "--progress",
+    "--no-playlist",
+    "--no-warnings",
+    "--verbose",
+    "--cookies",
+    cookiesPath,
+    "--referer",
+    "https://www.youtube.com/",
+  ]
+
+  // Add user agent to avoid bot detection
+  baseArgs.push(
+    "--user-agent",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+  )
+  baseArgs.push("--add-header", "Accept-Language:en-US,en;q=0.9")
+  baseArgs.push(
+    "--add-header",
+    "Accept:text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8",
+  )
+  baseArgs.push("--add-header", "Sec-Fetch-Mode:navigate")
+  baseArgs.push("--add-header", "Sec-Fetch-Site:none")
+  baseArgs.push("--add-header", "Sec-Fetch-User:?1")
+  baseArgs.push("--add-header", "Upgrade-Insecure-Requests:1")
+  baseArgs.push("--geo-bypass")
+  baseArgs.push("--extractor-retries", "3")
+  baseArgs.push("--socket-timeout", "30")
+
+  if (isAudioOnly) {
+    // Audio format
+    baseArgs.push("--extract-audio", "--audio-format", "mp3")
+
+    // Audio quality based on format
+    if (format === "mp3_320") {
+      baseArgs.push("--audio-quality", "0") // Best quality
+    } else if (format === "mp3_256") {
+      baseArgs.push("--audio-quality", "2") // Medium quality
+    } else {
+      baseArgs.push("--audio-quality", "5") // Lower quality
+    }
+  } else {
+    // Video format
+    if (format === "mp4_best") {
+      baseArgs.push("--format", "best[ext=mp4]/best")
+    } else if (format === "mp4_1024") {
+      baseArgs.push("--format", "bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[height<=1080][ext=mp4]/best")
+    } else if (format === "mp4_720") {
+      baseArgs.push("--format", "bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720][ext=mp4]/best")
+    } else {
+      baseArgs.push("--format", "best[ext=mp4]/best")
+    }
+
+    baseArgs.push("--merge-output-format", "mp4")
+  }
+
+  // Output path
+  baseArgs.push("--output", outputPath)
+
+  // URL must be the last argument
+  baseArgs.push(url)
+
+  return baseArgs
+}
+
+export async function GET(request: NextRequest) {
+  // This endpoint will be used to download the file
+  const url = request.nextUrl.pathname
+  const taskIdMatch = url.match(/\/api\/video\/download\/(.+)$/)
+
+  if (!taskIdMatch) {
+    return NextResponse.json({ error: "Invalid download URL" }, { status: 400 })
+  }
+
+  const fileId = taskIdMatch[1]
+  const tempDir = config.ytdl.tempDir
+
+  // Find the file
+  const files = fs.readdirSync(tempDir)
+  const matchingFile = files.find((file) => file.startsWith(fileId.split(".")[0]))
+
+  if (!matchingFile) {
+    return NextResponse.json({ error: "File not found" }, { status: 404 })
+  }
+
+  const filePath = path.join(tempDir, matchingFile)
+  const fileStats = fs.statSync(filePath)
+
+  // Get file extension
+  const ext = path.extname(matchingFile).substring(1)
+
+  // Set appropriate content type
+  const contentType = ext === "mp3" ? "audio/mpeg" : "video/mp4"
+
+  // Create readable stream
+  const fileStream = fs.createReadStream(filePath)
+
+  // Return the file as a stream
+  return new NextResponse(fileStream as any, {
+    headers: {
+      "Content-Type": contentType,
+      "Content-Disposition": `attachment; filename="download.${ext}"`,
+      "Content-Length": fileStats.size.toString(),
+    },
+  })
 }

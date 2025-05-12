@@ -9,17 +9,19 @@ import { VideoInfo } from "@/components/video-info"
 import { DownloadOptions } from "@/components/download-options"
 import { ProgressModal } from "@/components/progress-modal"
 import { useToast } from "@/components/ui/use-toast"
-import { Search, Loader2 } from "lucide-react"
+import { Search, Loader2, AlertCircle } from "lucide-react"
 import { useVideoInfo } from "@/hooks/use-video-info"
 import { useDownloadManager } from "@/hooks/use-download-manager"
 import { getYoutubeVideoId } from "@/lib/utils"
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 
 export function YoutubeDownloader() {
   const [url, setUrl] = useState("")
   const [isValidUrl, setIsValidUrl] = useState(false)
+  const [showError, setShowError] = useState(false)
   const { toast } = useToast()
 
-  const { videoInfo, isLoading: isLoadingInfo, fetchVideoInfo } = useVideoInfo()
+  const { videoInfo, isLoading: isLoadingInfo, error: videoInfoError, fetchVideoInfo } = useVideoInfo()
   const {
     activeDownload,
     startDownload,
@@ -52,10 +54,13 @@ export function YoutubeDownloader() {
       return
     }
 
+    setShowError(false)
+
     try {
       await fetchVideoInfo(url)
     } catch (error) {
       console.error("Error fetching video info:", error)
+      setShowError(true)
       toast({
         title: "Error",
         description: "Failed to fetch video information. Please try again.",
@@ -119,6 +124,18 @@ export function YoutubeDownloader() {
           )}
         </Button>
       </div>
+
+      {showError && (
+        <Alert variant="destructive">
+          <AlertCircle className="h-4 w-4" />
+          <AlertTitle>Error</AlertTitle>
+          <AlertDescription>
+            YouTube is detecting our request as automated. We're showing limited information.
+            <br />
+            <span className="text-xs mt-1 block">Note: Some videos may be restricted or require authentication.</span>
+          </AlertDescription>
+        </Alert>
+      )}
 
       {videoInfo && (
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">

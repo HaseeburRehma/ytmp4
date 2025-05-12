@@ -3,86 +3,185 @@ import { spawn } from "child_process"
 import ytdl from "ytdl-core"
 import { config } from "@/lib/config"
 import path from "path"
+import fs from "fs"
+import os from "os"
 
 export const runtime = "nodejs"
-export const maxDuration = 15
+export const maxDuration = 30
+
+// Create a cookies file from the environment variable
+async function createCookiesFile(): Promise<string> {
+  try {
+    // Create a temporary directory for cookies if it doesn't exist
+    const cookiesDir = path.join(os.tmpdir(), "youtube-downloader", "cookies")
+    if (!fs.existsSync(cookiesDir)) {
+      fs.mkdirSync(cookiesDir, { recursive: true })
+    }
+
+    // Create a temporary cookies file
+    const cookiesPath = path.join(cookiesDir, "youtube-cookies.txt")
+
+    // Check if we have cookies in the environment variable
+    const cookiesContent = process.env.YOUTUBE_COOKIES || ""
+
+    if (cookiesContent) {
+      fs.writeFileSync(cookiesPath, cookiesContent)
+      console.log("Created cookies file from environment variable")
+    } else {
+      // Create a minimal cookies file with default values
+      const minimalCookies = `# Netscape HTTP Cookie File
+.youtube.com	TRUE	/	FALSE	1735689600	CONSENT	YES+cb
+.youtube.com	TRUE	/	FALSE	1735689600	VISITOR_INFO1_LIVE	random_alphanumeric_string
+.youtube.com	TRUE	/	FALSE	1735689600	YSC	random_alphanumeric_string
+.youtube.com	TRUE	/	FALSE	1735689600	GPS	1
+`
+      fs.writeFileSync(cookiesPath, minimalCookies)
+      console.log("Created minimal cookies file")
+    }
+
+    return cookiesPath
+  } catch (error) {
+    console.error("Error creating cookies file:", error)
+    throw error
+  }
+}
 
 // Add this helper function to run yt-dlp when other methods fail
 async function getInfoWithYtDlp(url: string): Promise<any> {
-  return new Promise((resolve, reject) => {
-    // Use environment variable for yt-dlp path with fallback to /tmp/bin/yt-dlp
-   const ytDlpPath: string = config.ytdl.ytDlpPath
+  return new Promise(async (resolve, reject) => {
+    try {
+      // Create cookies file
+      const cookiesPath = await createCookiesFile()
 
-    console.log(`Using yt-dlp from: ${ytDlpPath}`)
+      // Use environment variable for yt-dlp path with fallback to /tmp/bin/yt-dlp
+      const ytDlpPath: string = config.ytdl.ytDlpPath
 
-    // Add cookies and user-agent to bypass YouTube's bot detection
-    const args = [
-      "--dump-json",
-      "--no-playlist",
-      "--no-warnings",
-      "--user-agent",
-      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
-      "--add-header",
-      "Accept-Language:en-US,en;q=0.9",
-      "--geo-bypass",
-      "--no-check-certificate",
-      url,
-    ]
+      console.log(`Using yt-dlp from: ${ytDlpPath}`)
 
-    console.log(`Executing: ${ytDlpPath} ${args.join(" ")}`)
+      // Add cookies and user-agent to bypass YouTube's bot detection
+      const args = [
+        "--dump-json",
+        "--no-playlist",
+        "--no-warnings",
+        "--cookies",
+        cookiesPath,
+        "--user-agent",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "--add-header",
+        "Accept-Language:en-US,en;q=0.9",
+        "--add-header",
+        "Accept:text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8",
+        "--add-header",
+        "Sec-Fetch-Mode:navigate",
+        "--add-header",
+        "Sec-Fetch-Site:none",
+        "--add-header",
+        "Sec-Fetch-User:?1",
+        "--add-header",
+        "Upgrade-Insecure-Requests:1",
+        "--geo-bypass",
+        "--no-check-certificate",
+        "--extractor-retries",
+        "3",
+        url,
+      ]
 
+      console.log(`Executing: ${ytDlpPath} ${args.join(" ")}`)
 
-    // Spawn yt-dlp process
-    const ytDlpProcess = spawn(ytDlpPath, args)
+      // Spawn yt-dlp process
+      const ytDlpProcess = spawn(ytDlpPath, args)
 
-    let output = ""
-    let errorOutput = ""
+      let output = ""
+      let errorOutput = ""
 
-    ytDlpProcess.stdout.on("data", (data: Buffer) => {
-      output += data.toString()
-    })
+      ytDlpProcess.stdout.on("data", (data: Buffer) => {
+        output += data.toString()
+      })
 
-    ytDlpProcess.stderr.on("data", (data: Buffer) => {
-      errorOutput += data.toString()
-    })
+      ytDlpProcess.stderr.on("data", (data: Buffer) => {
+        errorOutput += data.toString()
+        console.log(`yt-dlp stderr: ${data.toString()}`)
+      })
 
-    ytDlpProcess.on("close", (code: number | null) => {
-      if (code === 0 && output.trim()) {
-        try {
-          const info = JSON.parse(output.trim())
-          resolve({
-            title: info.title,
-            thumbnail: info.thumbnail,
-            duration: info.duration,
-            uploader: info.uploader,
-            view_count: info.view_count || 0,
-          })
-        } catch (error) {
-          console.error("Error parsing yt-dlp output:", error)
-          reject(new Error("Failed to parse video information"))
+      ytDlpProcess.on("close", (code: number | null) => {
+        console.log(`yt-dlp process exited with code ${code}`)
+        if (code === 0 && output.trim()) {
+          try {
+            const info = JSON.parse(output.trim())
+            resolve({
+              title: info.title,
+              thumbnail: info.thumbnail,
+              duration: info.duration,
+              uploader: info.uploader,
+              view_count: info.view_count || 0,
+            })
+          } catch (error) {
+            console.error("Error parsing yt-dlp output:", error)
+            reject(new Error("Failed to parse video information"))
+          }
+        } else {
+          console.error(`yt-dlp exited with code ${code}: ${errorOutput}`)
+
+          // If we get a bot detection error, try to extract minimal info
+          if (errorOutput.includes("Sign in to confirm you're not a bot")) {
+            try {
+              const videoId = extractVideoId(url)
+              if (videoId) {
+                console.log(`Bot detection triggered, falling back to minimal info for video ID: ${videoId}`)
+                resolve({
+                  title: `YouTube Video (${videoId})`,
+                  thumbnail: `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`,
+                  uploader: "Unknown",
+                  duration: 0,
+                  view_count: 0,
+                })
+                return
+              }
+            } catch (e) {
+              console.error("Failed to extract minimal info:", e)
+            }
+          }
+
+          reject(new Error(`Failed to get video info with yt-dlp: ${errorOutput}`))
         }
-      } else {
-        console.error(`yt-dlp exited with code ${code}: ${errorOutput}`)
-        reject(new Error(`Failed to get video info with yt-dlp: ${errorOutput}`))
-      }
-    })
+      })
 
-    ytDlpProcess.on("error", (err: Error) => {
-      console.error(`Failed to start yt-dlp: ${err.message}`)
-      reject(err)
-    })
+      ytDlpProcess.on("error", (err: Error) => {
+        console.error(`Failed to start yt-dlp: ${err.message}`)
+        reject(err)
+      })
 
-    // Add timeout
-    const timeoutId = setTimeout(() => {
-      ytDlpProcess.kill()
-      reject(new Error("yt-dlp process timed out"))
-    }, 10000)
+      // Add timeout
+      const timeoutId = setTimeout(() => {
+        ytDlpProcess.kill()
+        reject(new Error("yt-dlp process timed out"))
+      }, 15000)
 
-    // Clear timeout when process ends
-    ytDlpProcess.on("close", () => {
-      clearTimeout(timeoutId)
-    })
+      // Clear timeout when process ends
+      ytDlpProcess.on("close", () => {
+        clearTimeout(timeoutId)
+      })
+    } catch (error) {
+      reject(error)
+    }
   })
+}
+
+export async function GET(request: NextRequest) {
+  const searchParams = request.nextUrl.searchParams
+  const url = searchParams.get("url")
+
+  if (!url) {
+    return NextResponse.json({ error: "Missing url parameter" }, { status: 400 })
+  }
+
+  try {
+    const info = await getInfoWithYtDlp(url)
+    return NextResponse.json(info)
+  } catch (error: any) {
+    console.error("Error getting video info:", error)
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
 }
 
 export async function POST(request: NextRequest) {
@@ -151,6 +250,15 @@ export async function POST(request: NextRequest) {
 
         const response = await fetch(
           `https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId}&format=json`,
+          {
+            headers: {
+              "User-Agent":
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+              "Accept-Language": "en-US,en;q=0.9",
+              Accept: "application/json",
+              Referer: "https://www.google.com/",
+            },
+          },
         )
 
         if (!response.ok) {
@@ -215,7 +323,7 @@ export async function POST(request: NextRequest) {
   }
 }
 
-// Helper function to extract video ID (keep your existing function)
+// Helper function to extract video ID
 function extractVideoId(url: string): string | null {
   const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|&v=)([^#&?]*).*/
   const match = url.match(regExp)
