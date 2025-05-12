@@ -1,26 +1,26 @@
 import path from "path"
 import os from "os"
-import { existsSync } from "fs"
+import fs from "fs"
 
 const isWin = process.platform === "win32"
 const isProd = process.env.NODE_ENV === "production"
+const BIN_DIR = isProd ? "/app/bin" : path.resolve(__dirname, "../bin")
 
-// Helper to build paths correctly
-function resolveBinary(name: string) {
-  const binary = isWin ? `${name}.exe` : name
-  const localPath = path.resolve(__dirname, "../bin", binary)
-  return existsSync(localPath) ? localPath : binary
+function resolveBinary(name: string): string {
+  const bin = isWin ? `${name}.exe` : name
+  const localPath = path.join(BIN_DIR, bin)
+  return fs.existsSync(localPath) ? localPath : bin
 }
 
 export const config = {
   ytdl: {
-    ytDlpPath: isProd ? "/app/bin/yt-dlp" : resolveBinary("yt-dlp"),
-    ffmpegPath: isProd ? "/app/bin/ffmpeg" : resolveBinary("ffmpeg"),
-    ffprobePath: isProd ? "/app/bin/ffprobe" : resolveBinary("ffprobe"),
+    ytDlpPath: resolveBinary("yt-dlp"),
+    ffmpegPath: resolveBinary("ffmpeg"),
+    ffprobePath: resolveBinary("ffprobe"),
     maxConcurrentDownloads: 5,
     tempDir: path.join(os.tmpdir(), "youtube-downloader", "temp"),
-    cleanupInterval: 5 * 60 * 1000,
-    maxFileAge: 10 * 60 * 1000,
+    cleanupInterval: 300000,
+    maxFileAge: 600000,
   },
   redis: {
     enabled: !!process.env.REDIS_URL,
