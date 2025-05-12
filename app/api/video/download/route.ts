@@ -5,6 +5,7 @@ import fs from "fs"
 import path from "path"
 import os from "os"
 import { config } from "@/lib/config"
+import { convertJsonCookiesToNetscape } from "@/lib/cookie-converter"
 
 // Global store for download tasks
 const downloadTasks = new Map()
@@ -25,8 +26,17 @@ async function createCookiesFile(): Promise<string> {
     const cookiesContent = process.env.YOUTUBE_COOKIES || ""
 
     if (cookiesContent) {
-      fs.writeFileSync(cookiesPath, cookiesContent)
-      console.log("Created cookies file from environment variable")
+      // Check if the cookies are in JSON format and convert if needed
+      if (cookiesContent.trim().startsWith("[") || cookiesContent.trim().startsWith("{")) {
+        console.log("Detected JSON format cookies, converting to Netscape format")
+        const netscapeCookies = convertJsonCookiesToNetscape(cookiesContent)
+        fs.writeFileSync(cookiesPath, netscapeCookies)
+        console.log("Created cookies file from environment variable (converted from JSON)")
+      } else {
+        // Assume it's already in Netscape format
+        fs.writeFileSync(cookiesPath, cookiesContent)
+        console.log("Created cookies file from environment variable (Netscape format)")
+      }
     } else {
       // Create a minimal cookies file with default values
       const minimalCookies = `# Netscape HTTP Cookie File

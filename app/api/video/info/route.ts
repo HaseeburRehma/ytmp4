@@ -5,6 +5,7 @@ import { config } from "@/lib/config"
 import path from "path"
 import fs from "fs"
 import os from "os"
+import { convertJsonCookiesToNetscape } from "@/lib/cookie-converter"
 
 export const runtime = "nodejs"
 export const maxDuration = 30
@@ -25,8 +26,17 @@ async function createCookiesFile(): Promise<string> {
     const cookiesContent = process.env.YOUTUBE_COOKIES || ""
 
     if (cookiesContent) {
-      fs.writeFileSync(cookiesPath, cookiesContent)
-      console.log("Created cookies file from environment variable")
+      // Check if the cookies are in JSON format and convert if needed
+      if (cookiesContent.trim().startsWith("[") || cookiesContent.trim().startsWith("{")) {
+        console.log("Detected JSON format cookies, converting to Netscape format")
+        const netscapeCookies = convertJsonCookiesToNetscape(cookiesContent)
+        fs.writeFileSync(cookiesPath, netscapeCookies)
+        console.log("Created cookies file from environment variable (converted from JSON)")
+      } else {
+        // Assume it's already in Netscape format
+        fs.writeFileSync(cookiesPath, cookiesContent)
+        console.log("Created cookies file from environment variable (Netscape format)")
+      }
     } else {
       // Create a minimal cookies file with default values
       const minimalCookies = `# Netscape HTTP Cookie File
@@ -38,6 +48,10 @@ async function createCookiesFile(): Promise<string> {
       fs.writeFileSync(cookiesPath, minimalCookies)
       console.log("Created minimal cookies file")
     }
+
+    // Debug: Log the first few lines of the cookies file
+    const cookiesFileContent = fs.readFileSync(cookiesPath, "utf8")
+    console.log("Cookies file first 3 lines:", cookiesFileContent.split("\n").slice(0, 3).join("\n"))
 
     return cookiesPath
   } catch (error) {

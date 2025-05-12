@@ -7,6 +7,7 @@ import { spawn } from "child_process"
 import { EventEmitter } from "events"
 import { updateProgress } from "@/lib/global-store"
 import { config } from "@/lib/config"
+import { convertJsonCookiesToNetscape } from "@/lib/cookie-converter"
 
 // In-memory store for active downloads
 interface DownloadRecord {
@@ -38,20 +39,30 @@ if (config.ytdl.ffprobePath) {
 
 export class DownloadManager extends EventEmitter {
   private tempDir: string
+  private cookiesDir: string
   private ytDlpPath: string
   private debug = true
+  private cookiesPath: string | null = null
 
   constructor() {
     super()
     this.tempDir = config.ytdl.tempDir || path.join(os.tmpdir(), "youtube-downloader", "temp")
-    this.ytDlpPath = process.env.YT_DLP_PATH || "ytdlp"
+    this.cookiesDir = path.join(os.tmpdir(), "youtube-downloader", "cookies")
+    this.ytDlpPath = config.ytdl.ytDlpPath || "ytdlp"
 
     // Ensure temp directory exists
     try {
       fs.mkdirSync(this.tempDir, { recursive: true })
       console.log(`Ensured temp directory exists: ${this.tempDir}`)
+
+      // Also ensure cookies directory exists
+      fs.mkdirSync(this.cookiesDir, { recursive: true })
+      console.log(`Ensured cookies directory exists: ${this.cookiesDir}`)
+
+      // Initialize cookies file
+      this.initializeCookiesFile()
     } catch (err) {
-      console.error(`Error creating temp directory ${this.tempDir}:`, err)
+      console.error(`Error creating directories:`, err)
     }
 
     // Relay progress events into store
@@ -90,6 +101,56 @@ export class DownloadManager extends EventEmitter {
     setInterval(() => {
       this.cleanupCompletedDownloads()
     }, config.ytdl.cleanupInterval || 300000) // Default: 5 minutes
+
+    // Refresh cookies periodically
+    setInterval(() => {
+      this.initializeCookiesFile()
+    }, 3600000) // Refresh cookies every hour
+  }
+
+  /**
+   * Initialize cookies file from environment variable
+   */
+  private async initializeCookiesFile(): Promise<string> {
+    try {
+      // Create a temporary cookies file
+      const cookiesPath = path.join(this.cookiesDir, "youtube-cookies.txt")
+
+      // Check if we have cookies in the environment variable
+      const cookiesContent = process.env.YOUTUBE_COOKIES || ""
+
+      if (cookiesContent) {
+        // Check if the cookies are in JSON format and convert if needed
+        if (cookiesContent.trim().startsWith("[") || cookiesContent.trim().startsWith("{")) {
+          console.log("Detected JSON format cookies, converting to Netscape format")
+          const netscapeCookies = convertJsonCookiesToNetscape(cookiesContent)
+          fs.writeFileSync(cookiesPath, netscapeCookies)
+          console.log("Created cookies file from environment variable (converted from JSON)")
+        } else {
+          // Assume it's already in Netscape format
+          fs.writeFileSync(cookiesPath, cookiesContent)
+          console.log("Created cookies file from environment variable (Netscape format)")
+        }
+      } else {
+        // Create a minimal cookies file with default values
+        const minimalCookies = `# Netscape HTTP Cookie File
+.youtube.com	TRUE	/	FALSE	1735689600	CONSENT	YES+cb
+.youtube.com	TRUE	/	FALSE	1735689600	VISITOR_INFO1_LIVE	random_alphanumeric_string
+.youtube.com	TRUE	/	FALSE	1735689600	YSC	random_alphanumeric_string
+.youtube.com	TRUE	/	FALSE	1735689600	GPS	1
+`
+        fs.writeFileSync(cookiesPath, minimalCookies)
+        console.log("Created minimal cookies file")
+      }
+
+      // Store the cookies path for later use
+      this.cookiesPath = cookiesPath
+
+      return cookiesPath
+    } catch (error) {
+      console.error("Error creating cookies file:", error)
+      throw error
+    }
   }
 
   public getDownload(taskId: string) {
@@ -99,19 +160,104 @@ export class DownloadManager extends EventEmitter {
   /**
    * Fetch video title using yt-dlp
    */
-  async getVideoInfo(url: string): Promise<{ title: string }> {
+  async getVideoInfo(
+    url: string,
+  ): Promise<{ title: string; thumbnail?: string; duration?: number; uploader?: string; view_count?: number }> {
+    // Ensure cookies file is initialized
+    if (!this.cookiesPath) {
+      await this.initializeCookiesFile()
+    }
+
     return new Promise((resolve, reject) => {
-      const args = ["--skip-download", "--print", "title", "--no-warnings", url]
+      // Build arguments with cookies and user agent
+      const args = [
+        "--dump-json",
+        "--no-playlist",
+        "--no-warnings",
+        "--cookies",
+        this.cookiesPath!,
+        "--user-agent",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "--add-header",
+        "Accept-Language:en-US,en;q=0.9",
+        "--add-header",
+        "Accept:text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8",
+        "--add-header",
+        "Sec-Fetch-Mode:navigate",
+        "--add-header",
+        "Sec-Fetch-Site:none",
+        "--add-header",
+        "Sec-Fetch-User:?1",
+        "--add-header",
+        "Upgrade-Insecure-Requests:1",
+        "--geo-bypass",
+        "--no-check-certificate",
+        "--extractor-retries",
+        "3",
+        url,
+      ]
+
+      console.log(`Getting video info with args: ${args.join(" ")}`)
+
       const cp = spawn(this.ytDlpPath, args)
       let out = ""
       let err = ""
+
       cp.stdout.on("data", (d) => (out += d.toString()))
-      cp.stderr.on("data", (d) => (err += d.toString()))
-      cp.on("close", (code) => {
-        if (code === 0) resolve({ title: out.trim() })
-        else reject(new Error(`yt-dlp exited ${code}: ${err}`))
+      cp.stderr.on("data", (d) => {
+        err += d.toString()
+        console.log(`yt-dlp stderr: ${d.toString()}`)
       })
-      cp.on("error", reject)
+
+      cp.on("close", (code) => {
+        if (code === 0 && out.trim()) {
+          try {
+            const info = JSON.parse(out.trim())
+            resolve({
+              title: info.title,
+              thumbnail: info.thumbnail,
+              duration: info.duration,
+              uploader: info.uploader,
+              view_count: info.view_count || 0,
+            })
+          } catch (error) {
+            console.error("Error parsing yt-dlp output:", error)
+
+            // If we can't parse the JSON but have a title, return that
+            const titleMatch = out.match(/"title":\s*"([^"]+)"/)
+            if (titleMatch && titleMatch[1]) {
+              resolve({ title: titleMatch[1] })
+              return
+            }
+
+            reject(new Error("Failed to parse video information"))
+          }
+        } else {
+          console.error(`yt-dlp exited ${code}: ${err}`)
+
+          // If we get a bot detection error, try to extract minimal info from the URL
+          if (err.includes("Sign in to confirm you're not a bot")) {
+            const videoId = this.extractVideoId(url)
+            if (videoId) {
+              resolve({
+                title: `YouTube Video (${videoId})`,
+                thumbnail: `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`,
+                uploader: "Unknown",
+                duration: 0,
+                view_count: 0,
+              })
+              return
+            }
+          }
+
+          reject(new Error(`yt-dlp exited ${code}: ${err}`))
+        }
+      })
+
+      cp.on("error", (error) => {
+        console.error(`yt-dlp process error:`, error)
+        reject(error)
+      })
     })
   }
 
@@ -149,6 +295,11 @@ export class DownloadManager extends EventEmitter {
     })
 
     try {
+      // Ensure cookies file is initialized
+      if (!this.cookiesPath) {
+        await this.initializeCookiesFile()
+      }
+
       // Create a unique filename for this download
       const tempBase = path.join(this.tempDir, `${downloadTaskId}`)
 
@@ -159,6 +310,28 @@ export class DownloadManager extends EventEmitter {
         "--no-playlist", // Don't download playlists
         "--no-warnings", // Suppress warnings
         "--verbose", // Add verbose output for debugging
+        "--cookies",
+        this.cookiesPath!, // Use cookies file
+        "--user-agent",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "--add-header",
+        "Accept-Language:en-US,en;q=0.9",
+        "--add-header",
+        "Accept:text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8",
+        "--add-header",
+        "Sec-Fetch-Mode:navigate",
+        "--add-header",
+        "Sec-Fetch-Site:none",
+        "--add-header",
+        "Sec-Fetch-User:?1",
+        "--add-header",
+        "Upgrade-Insecure-Requests:1",
+        "--geo-bypass",
+        "--no-check-certificate",
+        "--extractor-retries",
+        "3",
+        "--socket-timeout",
+        "30",
       ]
 
       if (isMP3) {
@@ -218,6 +391,14 @@ export class DownloadManager extends EventEmitter {
       ytdlpProcess.stderr.on("data", (data) => {
         stderrBuffer += data.toString()
         console.error(`yt-dlp stderr: ${data}`)
+
+        // Check for cookie errors and try to refresh cookies
+        if (data.toString().includes("Sign in to confirm you're not a bot")) {
+          console.log("Bot detection triggered, refreshing cookies...")
+          this.initializeCookiesFile().catch((err) => {
+            console.error("Failed to refresh cookies:", err)
+          })
+        }
       })
 
       // Handle process completion
@@ -226,6 +407,19 @@ export class DownloadManager extends EventEmitter {
 
         if (code !== 0) {
           console.error(`yt-dlp failed with code ${code}: ${stderrBuffer}`)
+
+          // If we get a bot detection error, try to extract video ID and use fallback
+          if (stderrBuffer.includes("Sign in to confirm you're not a bot")) {
+            const videoId = this.extractVideoId(url)
+            if (videoId) {
+              console.log(`Bot detection triggered, using fallback for video ID: ${videoId}`)
+
+              // Try to download using a different approach or just mark as failed
+              this.fail(downloadTaskId, `YouTube bot detection triggered. Please try again later.`)
+              return
+            }
+          }
+
           this.fail(downloadTaskId, `Download failed with code ${code}`)
           return
         }
@@ -793,6 +987,15 @@ export class DownloadManager extends EventEmitter {
         )
       }
     }
+  }
+
+  /**
+   * Extract video ID from YouTube URL
+   */
+  private extractVideoId(url: string): string | null {
+    const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|&v=)([^#&?]*).*/
+    const match = url.match(regExp)
+    return match && match[2].length === 11 ? match[2] : null
   }
 }
 
