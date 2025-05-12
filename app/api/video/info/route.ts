@@ -1,6 +1,8 @@
 import { type NextRequest, NextResponse } from "next/server"
 import { spawn } from "child_process"
 import ytdl from "ytdl-core"
+import { config } from "@/lib/config"
+import path from "path"
 
 export const runtime = "nodejs"
 export const maxDuration = 15
@@ -9,7 +11,7 @@ export const maxDuration = 15
 async function getInfoWithYtDlp(url: string): Promise<any> {
   return new Promise((resolve, reject) => {
     // Use environment variable for yt-dlp path with fallback to /tmp/bin/yt-dlp
-    const ytDlpPath: string = process.env.YT_DLP_PATH || "/tmp/bin/yt-dlp"
+    const ytDlpPath: string = config.ytdl.ytDlpPath
 
     console.log(`Using yt-dlp from: ${ytDlpPath}`)
 
