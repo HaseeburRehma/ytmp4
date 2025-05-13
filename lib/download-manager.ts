@@ -733,10 +733,15 @@ export class DownloadManager extends EventEmitter {
         // For MP3, convert to MP3 format with appropriate bitrate
         const bitrate = download.format.includes("320") ? 320 : download.format.includes("256") ? 256 : 128
 
-        ffmpegCommand.audioCodec("libmp3lame").audioBitrate(bitrate).format("mp3").outputOptions(["-y"]) // Overwrite output file if it exists
+        // Use faster encoding preset for better performance
+        ffmpegCommand
+          .audioCodec("libmp3lame")
+          .audioBitrate(bitrate)
+          .format("mp3")
+          .outputOptions(["-y", "-preset", "ultrafast"]) // Overwrite output file if it exists and use ultrafast preset
       } else if (isAudioOnly) {
         // For audio-only files requested as MP4, convert to MP4 container but it will be audio-only
-        ffmpegCommand.audioCodec("aac").audioBitrate(192).format("mp4").outputOptions(["-y"]) // Overwrite output file if it exists
+        ffmpegCommand.audioCodec("aac").audioBitrate(192).format("mp4").outputOptions(["-y", "-preset", "ultrafast"]) // Overwrite output file if it exists and use ultrafast preset
       } else {
         // For MP4, just copy the streams to avoid re-encoding
         ffmpegCommand.outputOptions(["-c", "copy", "-y"]) // Copy streams and overwrite output

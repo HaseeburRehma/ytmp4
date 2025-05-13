@@ -412,44 +412,66 @@ async function startDownloadProcess(taskId: string, url: string, format: string,
   }
 }
 
+export const runtime = "nodejs"
+export const maxDuration = 60 // Increase timeout for large files
+
 export async function GET(request: NextRequest) {
-  // This endpoint will be used to download the file
-  const url = request.nextUrl.pathname
-  const taskIdMatch = url.match(/\/api\/video\/download\/(.+)$/)
+  try {
+    // Get the taskId from the query parameters
+    const taskId = request.nextUrl.searchParams.get("taskId")
 
-  if (!taskIdMatch) {
-    return NextResponse.json({ error: "Invalid download URL" }, { status: 400 })
+    if (!taskId) {
+      return NextResponse.json({ error: "Task ID is required" }, { status: 400 })
+    }
+
+    console.log(`Processing download request for task: ${taskId}`)
+
+    const tempDir = config.ytdl.tempDir
+
+    // Find the file
+    const files = fs.readdirSync(tempDir)
+    const matchingFile = files.find((file) => file.includes(taskId))
+
+    if (!matchingFile) {
+      console.error(`File not found for task ${taskId}. Available files:`, files)
+      return NextResponse.json({ error: "File not found" }, { status: 404 })
+    }
+
+    const filePath = path.join(tempDir, matchingFile)
+
+    // Verify file exists and is readable
+    if (!fs.existsSync(filePath)) {
+      console.error(`File does not exist: ${filePath}`)
+      return NextResponse.json({ error: "File not found" }, { status: 404 })
+    }
+
+    // Get file stats
+    const fileStats = fs.statSync(filePath)
+
+    // Get file extension
+    const ext = path.extname(matchingFile).substring(1)
+
+    // Set appropriate content type
+    const contentType = ext === "mp3" ? "audio/mpeg" : "video/mp4"
+
+    console.log(`Serving file: ${filePath} (${fileStats.size} bytes, ${contentType})`)
+
+    // Create readable stream
+    const fileStream = fs.createReadStream(filePath)
+
+    // Return the file as a stream with proper headers
+    return new NextResponse(fileStream as any, {
+      headers: {
+        "Content-Type": contentType,
+        "Content-Disposition": `attachment; filename="${encodeURIComponent(matchingFile)}"`,
+        "Content-Length": fileStats.size.toString(),
+        "Cache-Control": "no-cache, no-store, must-revalidate",
+        Pragma: "no-cache",
+        Expires: "0",
+      },
+    })
+  } catch (error) {
+    console.error("Error serving download:", error)
+    return NextResponse.json({ error: "Failed to serve file" }, { status: 500 })
   }
-
-  const fileId = taskIdMatch[1]
-  const tempDir = config.ytdl.tempDir
-
-  // Find the file
-  const files = fs.readdirSync(tempDir)
-  const matchingFile = files.find((file) => file.startsWith(fileId.split(".")[0]))
-
-  if (!matchingFile) {
-    return NextResponse.json({ error: "File not found" }, { status: 404 })
-  }
-
-  const filePath = path.join(tempDir, matchingFile)
-  const fileStats = fs.statSync(filePath)
-
-  // Get file extension
-  const ext = path.extname(matchingFile).substring(1)
-
-  // Set appropriate content type
-  const contentType = ext === "mp3" ? "audio/mpeg" : "video/mp4"
-
-  // Create readable stream
-  const fileStream = fs.createReadStream(filePath)
-
-  // Return the file as a stream
-  return new NextResponse(fileStream as any, {
-    headers: {
-      "Content-Type": contentType,
-      "Content-Disposition": `attachment; filename="download.${ext}"`,
-      "Content-Length": fileStats.size.toString(),
-    },
-  })
 }
