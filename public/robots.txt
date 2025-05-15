@@ -1,0 +1,12 @@
+# robots.txt for Dynamo Downloader
+
+User-agent: *
+Allow: /
+
+# Disallow admin and private areas
+Disallow: /admin/
+Disallow: /private/
+Disallow: /api/
+
+# Sitemap location
+Sitemap: https://youtubetomp4download.com/sitemap.xml
